@@ -19,6 +19,8 @@ object TouchPointerSequence {
 
     enum class Kind { Down, Move, Up }
 
+    enum class FailureReason { InvalidContact, MissingContact, TooManyContacts }
+
     data class Pointer(
         val contact: Int,
         val x: Float,
@@ -31,6 +33,7 @@ object TouchPointerSequence {
         val changingIndex: Int = 0,
         val pointers: List<Pointer> = emptyList(),
         val cancelFirst: Boolean = false,
+        val failureReason: FailureReason? = null,
     )
 
     fun plan(
@@ -40,7 +43,9 @@ object TouchPointerSequence {
         x: Float,
         y: Float,
     ): Step {
-        if (contact !in 0..<MAX_CONTACTS) return Step(ok = false)
+        if (contact !in 0..<MAX_CONTACTS) {
+            return Step(ok = false, failureReason = FailureReason.InvalidContact)
+        }
         val idx = current.indexOfFirst { it.contact == contact }
         val nextPointer = Pointer(contact, x, y)
         return when (kind) {
@@ -59,7 +64,9 @@ object TouchPointerSequence {
                     pointers = listOf(nextPointer),
                 )
 
-                current.size >= MAX_CONTACTS -> Step(ok = false)
+                current.size >= MAX_CONTACTS -> {
+                    Step(ok = false, failureReason = FailureReason.TooManyContacts)
+                }
                 else -> {
                     val next = current + nextPointer
                     Step(
@@ -72,14 +79,18 @@ object TouchPointerSequence {
             }
 
             Kind.Move -> {
-                if (idx < 0) return Step(ok = false)
+                if (idx < 0) {
+                    return Step(ok = false, failureReason = FailureReason.MissingContact)
+                }
                 val next = current.toMutableList()
                 next[idx] = nextPointer
                 Step(ok = true, actionMasked = ACTION_MOVE, changingIndex = idx, pointers = next)
             }
 
             Kind.Up -> {
-                if (idx < 0) return Step(ok = false)
+                if (idx < 0) {
+                    return Step(ok = false, failureReason = FailureReason.MissingContact)
+                }
                 val next = current.toMutableList()
                 next[idx] = nextPointer
                 if (current.size == 1) {

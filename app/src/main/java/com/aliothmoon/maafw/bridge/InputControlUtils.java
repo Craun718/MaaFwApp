@@ -85,11 +85,33 @@ public final class InputControlUtils {
      */
     private static boolean inject(MotionEvent event, int displayId, int mode, int reportIndex) {
         try {
+            long setDisplayStartNanos = SystemClock.elapsedRealtimeNanos();
+            long injectStartNanos = 0;
             if (!setDisplayId(event, displayId)) {
+                logTouchInjectionFailure(
+                        event,
+                        reportIndex,
+                        displayId,
+                        mode,
+                        "SET_DISPLAY_ID",
+                        setDisplayStartNanos,
+                        injectStartNanos);
                 return false;
             }
             notifyTouchCallback(event, reportIndex);
-            return getManager().injectInputEvent(event, mode);
+            injectStartNanos = SystemClock.elapsedRealtimeNanos();
+            boolean injected = getManager().injectInputEvent(event, mode);
+            if (!injected) {
+                logTouchInjectionFailure(
+                        event,
+                        reportIndex,
+                        displayId,
+                        mode,
+                        "INJECT_INPUT_EVENT",
+                        setDisplayStartNanos,
+                        injectStartNanos);
+            }
+            return injected;
         } finally {
             event.recycle();
         }
@@ -141,6 +163,108 @@ public final class InputControlUtils {
         slots = Collections.emptyList();
     }
 
+    private static String formatSlots(List<TouchPointerSequence.Pointer> pointers) {
+        StringBuilder builder = new StringBuilder("[");
+        for (int i = 0; i < pointers.size(); i++) {
+            TouchPointerSequence.Pointer pointer = pointers.get(i);
+            if (i > 0) {
+                builder.append(',');
+            }
+            builder.append(pointer.getContact())
+                    .append(':')
+                    .append(pointer.getX())
+                    .append(',')
+                    .append(pointer.getY());
+        }
+        return builder.append(']').toString();
+    }
+
+    private static String formatPointers(MotionEvent event) {
+        StringBuilder builder = new StringBuilder("[");
+        for (int i = 0; i < event.getPointerCount(); i++) {
+            if (i > 0) {
+                builder.append(',');
+            }
+            builder.append(event.getPointerId(i))
+                    .append(':')
+                    .append(event.getX(i))
+                    .append(',')
+                    .append(event.getY(i));
+        }
+        return builder.append(']').toString();
+    }
+
+    private static String actionName(int maskedAction) {
+        switch (maskedAction) {
+            case MotionEvent.ACTION_DOWN: return "DOWN";
+            case MotionEvent.ACTION_UP: return "UP";
+            case MotionEvent.ACTION_MOVE: return "MOVE";
+            case MotionEvent.ACTION_CANCEL: return "CANCEL";
+            case MotionEvent.ACTION_POINTER_DOWN: return "POINTER_DOWN";
+            case MotionEvent.ACTION_POINTER_UP: return "POINTER_UP";
+            default: return "UNKNOWN_" + maskedAction;
+        }
+    }
+
+    private static String injectModeName(int mode) {
+        switch (mode) {
+            case InputManager.INJECT_INPUT_EVENT_MODE_ASYNC: return "ASYNC";
+            case InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_RESULT: return "WAIT_FOR_RESULT";
+            case InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH: return "WAIT_FOR_FINISH";
+            default: return "UNKNOWN_" + mode;
+        }
+    }
+
+    private static String elapsedMs(long startNanos) {
+        return String.valueOf((SystemClock.elapsedRealtimeNanos() - startNanos) / 1_000_000.0);
+    }
+
+    private static void logPlanFailure(
+            TouchPointerSequence.Step step,
+            TouchPointerSequence.Kind kind,
+            int x,
+            int y,
+            int contact,
+            int displayId
+    ) {
+        Ln.w(TAG + ": touch plan failed"
+                + " reason=" + step.getFailureReason()
+                + " kind=" + kind
+                + " displayId=" + displayId
+                + " contact=" + contact
+                + " x=" + x
+                + " y=" + y
+                + " slots=" + formatSlots(slots));
+    }
+
+    private static void logTouchInjectionFailure(
+            MotionEvent event,
+            int reportIndex,
+            int displayId,
+            int mode,
+            String stage,
+            long setDisplayStartNanos,
+            long injectStartNanos
+    ) {
+        int index = Math.min(reportIndex, Math.max(0, event.getPointerCount() - 1));
+        Ln.w(TAG + ": touch inject failed"
+                + " stage=" + stage
+                + " action=" + actionName(event.getActionMasked())
+                + " actionRaw=" + event.getAction()
+                + " requestedDisplayId=" + displayId
+                + " eventDisplayId=" + InputManager.getDisplayIdForLog(event)
+                + " changingIndex=" + index
+                + " changingContact=" + event.getPointerId(index)
+                + " x=" + event.getX(index)
+                + " y=" + event.getY(index)
+                + " pointers=" + formatPointers(event)
+                + " mode=" + injectModeName(mode)
+                + " setDisplayElapsedMs=" + elapsedMs(setDisplayStartNanos)
+                + " injectElapsedMs=" + (injectStartNanos == 0 ? "not_reached" : elapsedMs(injectStartNanos))
+                + " gestureDownTime=" + event.getDownTime()
+                + " eventTime=" + event.getEventTime());
+    }
+
     private static boolean injectStep(TouchPointerSequence.Step step, int displayId) {
         if (!step.getOk()) {
             return false;
@@ -179,7 +303,12 @@ public final class InputControlUtils {
 
     private static synchronized boolean apply(TouchPointerSequence.Kind kind, int x, int y, int contact,
                                               int displayId) {
-        return injectStep(TouchPointerSequence.INSTANCE.plan(kind, slots, contact, x, y), displayId);
+        TouchPointerSequence.Step step = TouchPointerSequence.INSTANCE.plan(kind, slots, contact, x, y);
+        if (!step.getOk()) {
+            logPlanFailure(step, kind, x, y, contact, displayId);
+            return false;
+        }
+        return injectStep(step, displayId);
     }
 
     public static boolean down(int x, int y, int contact, int displayId) {
@@ -198,20 +327,88 @@ public final class InputControlUtils {
         long downTime = SystemClock.uptimeMillis();
         KeyEvent keyEvent = new KeyEvent(downTime, downTime, KeyEvent.ACTION_DOWN, keyCode, 0);
 
+        long setDisplayStartNanos = SystemClock.elapsedRealtimeNanos();
+        long injectStartNanos;
         if (!setDisplayId(keyEvent, displayId)) {
+            logKeyInjectionFailure(
+                    keyEvent,
+                    keyCode,
+                    displayId,
+                    "WAIT_FOR_FINISH",
+                    "SET_DISPLAY_ID",
+                    setDisplayStartNanos,
+                    0);
             return false;
         }
-        return getManager().injectInputEvent(keyEvent, InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH);
+        injectStartNanos = SystemClock.elapsedRealtimeNanos();
+        boolean injected = getManager().injectInputEvent(
+                keyEvent,
+                InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH);
+        if (!injected) {
+            logKeyInjectionFailure(
+                    keyEvent,
+                    keyCode,
+                    displayId,
+                    "WAIT_FOR_FINISH",
+                    "INJECT_INPUT_EVENT",
+                    setDisplayStartNanos,
+                    injectStartNanos);
+        }
+        return injected;
     }
 
     public static boolean keyUp(int keyCode, int displayId) {
         long upTime = SystemClock.uptimeMillis();
         KeyEvent keyEvent = new KeyEvent(upTime, upTime, KeyEvent.ACTION_UP, keyCode, 0);
 
+        long setDisplayStartNanos = SystemClock.elapsedRealtimeNanos();
+        long injectStartNanos;
         if (!setDisplayId(keyEvent, displayId)) {
+            logKeyInjectionFailure(
+                    keyEvent,
+                    keyCode,
+                    displayId,
+                    "ASYNC",
+                    "SET_DISPLAY_ID",
+                    setDisplayStartNanos,
+                    0);
             return false;
         }
 
-        return getManager().injectInputEvent(keyEvent, InputManager.INJECT_INPUT_EVENT_MODE_ASYNC);
+        injectStartNanos = SystemClock.elapsedRealtimeNanos();
+        boolean injected = getManager().injectInputEvent(keyEvent, InputManager.INJECT_INPUT_EVENT_MODE_ASYNC);
+        if (!injected) {
+            logKeyInjectionFailure(
+                    keyEvent,
+                    keyCode,
+                    displayId,
+                    "ASYNC",
+                    "INJECT_INPUT_EVENT",
+                    setDisplayStartNanos,
+                    injectStartNanos);
+        }
+        return injected;
+    }
+
+    private static void logKeyInjectionFailure(
+            KeyEvent event,
+            int keyCode,
+            int displayId,
+            String mode,
+            String stage,
+            long setDisplayStartNanos,
+            long injectStartNanos
+    ) {
+        Ln.w(TAG + ": key inject failed"
+                + " stage=" + stage
+                + " action=" + (event.getAction() == KeyEvent.ACTION_DOWN ? "DOWN" : "UP")
+                + " keyCode=" + keyCode
+                + " requestedDisplayId=" + displayId
+                + " eventDisplayId=" + InputManager.getDisplayIdForLog(event)
+                + " mode=" + mode
+                + " setDisplayElapsedMs=" + elapsedMs(setDisplayStartNanos)
+                + " injectElapsedMs=" + (injectStartNanos == 0 ? "not_reached" : elapsedMs(injectStartNanos))
+                + " downTime=" + event.getDownTime()
+                + " eventTime=" + event.getEventTime());
     }
 }

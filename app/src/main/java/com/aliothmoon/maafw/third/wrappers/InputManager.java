@@ -2,7 +2,9 @@ package com.aliothmoon.maafw.third.wrappers;
 
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
+import android.os.SystemClock;
 import android.view.InputEvent;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 
 import com.aliothmoon.maafw.constant.AndroidVersions;
@@ -24,6 +26,7 @@ public final class InputManager {
 
     private static Method injectInputEventMethod;
     private static Method setDisplayIdMethod;
+    private static Method getDisplayIdMethod;
     private static Method setActionButtonMethod;
     private static Method addUniqueIdAssociationByPortMethod;
     private static Method removeUniqueIdAssociationByPortMethod;
@@ -46,9 +49,18 @@ public final class InputManager {
     }
 
     public boolean injectInputEvent(InputEvent inputEvent, int mode) {
+        long startNanos = SystemClock.elapsedRealtimeNanos();
         try {
             Method method = getInjectInputEventMethod();
-            return (boolean) method.invoke(manager, inputEvent, mode);
+            boolean injected = (boolean) method.invoke(manager, inputEvent, mode);
+            if (!injected) {
+                Ln.w("injectInputEvent returned false"
+                        + " event=" + describeInputEvent(inputEvent)
+                        + " displayId=" + getDisplayIdForLog(inputEvent)
+                        + " mode=" + mode
+                        + " elapsedMs=" + (SystemClock.elapsedRealtimeNanos() - startNanos) / 1_000_000.0);
+            }
+            return injected;
         } catch (ReflectiveOperationException e) {
             if (e instanceof InvocationTargetException) {
                 Throwable cause = e.getCause();
@@ -59,16 +71,57 @@ public final class InputManager {
                         long now = System.currentTimeMillis();
                         if (lastPermissionLogDate <= now - 3000) {
                             Ln.e(message);
-                            Ln.e("Make sure you have enabled \"USB debugging (Security Settings)\" and then rebooted your device.");
+                            Ln.e("Make sure you have enabled \"USB debugging (Security Settings)\""
+                                    + " and then rebooted your device.");
                             lastPermissionLogDate = now;
                         }
+                        Ln.w("injectInputEvent invocation rejected"
+                                + " event=" + describeInputEvent(inputEvent)
+                                + " displayId=" + getDisplayIdForLog(inputEvent)
+                                + " mode=" + mode
+                                + " cause=" + cause.getClass().getName()
+                                + ":" + cause.getMessage()
+                                + " elapsedMs="
+                                + (SystemClock.elapsedRealtimeNanos() - startNanos) / 1_000_000.0);
                         // Do not print the stack trace
                         return false;
                     }
                 }
             }
-            Ln.e("Could not invoke method", e);
+            Ln.e("Could not invoke injectInputEvent"
+                            + " event=" + describeInputEvent(inputEvent)
+                            + " displayId=" + getDisplayIdForLog(inputEvent)
+                            + " mode=" + mode,
+                    e);
             return false;
+        }
+    }
+
+    private static String describeInputEvent(InputEvent inputEvent) {
+        if (inputEvent instanceof MotionEvent) {
+            MotionEvent event = (MotionEvent) inputEvent;
+            return "MotionEvent(action=" + event.getActionMasked()
+                    + ",actionRaw=" + event.getAction()
+                    + ",pointerCount=" + event.getPointerCount()
+                    + ')';
+        }
+        if (inputEvent instanceof KeyEvent) {
+            KeyEvent event = (KeyEvent) inputEvent;
+            return "KeyEvent(action=" + event.getAction()
+                    + ",keyCode=" + event.getKeyCode()
+                    + ')';
+        }
+        return inputEvent.getClass().getName();
+    }
+
+    public static String getDisplayIdForLog(InputEvent inputEvent) {
+        try {
+            if (getDisplayIdMethod == null) {
+                getDisplayIdMethod = InputEvent.class.getMethod("getDisplayId");
+            }
+            return String.valueOf(getDisplayIdMethod.invoke(inputEvent));
+        } catch (ReflectiveOperationException e) {
+            return "unavailable:" + e.getClass().getSimpleName();
         }
     }
 
@@ -85,7 +138,11 @@ public final class InputManager {
             method.invoke(inputEvent, displayId);
             return true;
         } catch (ReflectiveOperationException e) {
-            Ln.e("Cannot associate a display id to the input event", e);
+            Ln.e("Cannot associate a display id to the input event"
+                            + " requestedDisplayId=" + displayId
+                            + " eventDisplayId=" + getDisplayIdForLog(inputEvent)
+                            + " event=" + describeInputEvent(inputEvent),
+                    e);
             return false;
         }
     }

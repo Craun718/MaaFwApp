@@ -1,5 +1,6 @@
 package com.aliothmoon.maafw.bridge
 
+import com.aliothmoon.maafw.bridge.TouchPointerSequence.FailureReason
 import com.aliothmoon.maafw.bridge.TouchPointerSequence.Kind
 import com.aliothmoon.maafw.bridge.TouchPointerSequence.Pointer
 import org.junit.Assert.assertEquals
@@ -91,21 +92,39 @@ class TouchPointerSequenceTest {
 
     @Test
     fun `move or up without that contact is rejected`() {
-        assertFalse(TouchPointerSequence.plan(Kind.Move, listOf(p(0)), 1, 0f, 0f).ok)
-        assertFalse(TouchPointerSequence.plan(Kind.Up, listOf(p(0)), 1, 0f, 0f).ok)
+        val move = TouchPointerSequence.plan(Kind.Move, listOf(p(0)), 1, 0f, 0f)
+        val up = TouchPointerSequence.plan(Kind.Up, listOf(p(0)), 1, 0f, 0f)
+
+        assertFalse(move.ok)
+        assertEquals(FailureReason.MissingContact, move.failureReason)
+        assertFalse(up.ok)
+        assertEquals(FailureReason.MissingContact, up.failureReason)
     }
 
     @Test
     fun `out of range contact is rejected`() {
-        assertFalse(TouchPointerSequence.plan(Kind.Down, emptyList(), -1, 0f, 0f).ok)
-        assertFalse(
+        val negative = TouchPointerSequence.plan(Kind.Down, emptyList(), -1, 0f, 0f)
+        val tooLarge =
             TouchPointerSequence.plan(
                 Kind.Down,
                 emptyList(),
                 TouchPointerSequence.MAX_CONTACTS,
                 0f,
                 0f,
-            ).ok,
-        )
+            )
+
+        assertFalse(negative.ok)
+        assertEquals(FailureReason.InvalidContact, negative.failureReason)
+        assertFalse(tooLarge.ok)
+        assertEquals(FailureReason.InvalidContact, tooLarge.failureReason)
+    }
+
+    @Test
+    fun `adding another contact beyond capacity is rejected`() {
+        val current = List(TouchPointerSequence.MAX_CONTACTS) { p(1) }
+        val step = TouchPointerSequence.plan(Kind.Down, current, 0, 0f, 0f)
+
+        assertFalse(step.ok)
+        assertEquals(FailureReason.TooManyContacts, step.failureReason)
     }
 }
