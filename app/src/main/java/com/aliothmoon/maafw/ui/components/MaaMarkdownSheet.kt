@@ -16,7 +16,16 @@ fun MaaMarkdownSheet(
     body: String?,
     onDismiss: () -> Unit,
 ) {
-    if (body == null) return
+    MaaMarkdownSheet(title, body?.let(::listOf), onDismiss)
+}
+
+@Composable
+fun MaaMarkdownSheet(
+    title: String,
+    bodies: List<String>?,
+    onDismiss: () -> Unit,
+) {
+    if (bodies.isNullOrEmpty()) return
     MaaModalSheet(onDismiss = onDismiss) { modifier ->
         Column(modifier) {
             MaaSheetHeader(title = title, onClose = onDismiss)
@@ -26,11 +35,18 @@ fun MaaMarkdownSheet(
                     .verticalScroll(rememberScrollState())
                     .padding(bottom = MaaDesignTokens.Spacing.lg),
             ) {
-                MaaMarkdown(
-                    text = body,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
+                bodies.forEachIndexed { index, body ->
+                    MaaMarkdown(
+                        text = body,
+                        modifier = if (index == 0) {
+                            Modifier
+                        } else {
+                            Modifier.padding(top = MaaDesignTokens.Spacing.md)
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
             }
         }
     }
