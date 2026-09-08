@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.ExitToApp
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Cancel
@@ -34,7 +33,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -55,10 +53,12 @@ import com.aliothmoon.maafw.runner.VirtualDisplayKey
 import com.aliothmoon.maafw.session.SessionIntent
 import com.aliothmoon.maafw.session.SessionUiState
 import com.aliothmoon.maafw.theme.MaaDesignTokens
+import com.aliothmoon.maafw.theme.MaaIcons
+import com.aliothmoon.maafw.theme.MaaTheme
 import com.aliothmoon.maafw.ui.components.MaaButton
 import com.aliothmoon.maafw.ui.components.MaaOutlinedButton
 import com.aliothmoon.maafw.ui.components.MaaSemanticOutlinedButton
-import com.aliothmoon.maafw.theme.MaaTheme
+import com.aliothmoon.maafw.ui.components.MaaSwitch
 
 /**
  * 底部启停条
@@ -273,7 +273,7 @@ internal fun TasksQuickOptionsPanel(
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f),
                         )
-                        Switch(
+                        MaaSwitch(
                             checked = state.virtualDisplayKeysUnlocked,
                             onCheckedChange = {
                                 onIntent(SessionIntent.SetVirtualDisplayKeysUnlocked(it))
@@ -290,7 +290,7 @@ internal fun TasksQuickOptionsPanel(
                         horizontalArrangement = Arrangement.spacedBy(MaaDesignTokens.Spacing.sm),
                     ) {
                         ActionIconTile(
-                            icon = Icons.AutoMirrored.Outlined.ArrowBack,
+                            icon = MaaIcons.BackAction,
                             contentDescription = stringResource(R.string.quick_action_back),
                             accent = MaterialTheme.colorScheme.secondary,
                             enabled = state.virtualDisplayKeysEnabled,
