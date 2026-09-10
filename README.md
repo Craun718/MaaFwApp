@@ -20,7 +20,7 @@ MaaFwApp 本身不包含具体业务资源。Android 上要把资源在**构建�
 
 ### 任务与资源
 
-- 支持 Project Interface V2 的任务、选项（选择 / 开关 / 多选 / 输入）、预设、分组、`import`、`global_option` 与国际化。
+- 支持 Project Interface V2 的任务、选项（选择 / 开关 / 带数量限制的多选 / 含密码输入的表单）、预设、分组、`import`、`global_option` 与国际化。
 - 任务说明支持 Markdown、文件路径和 http(s) 链接；首启欢迎、关于页的联系方式 / 许可 / 仓库地址取自 PI 顶层字段。
 - 可同时保存多份运行配置，配置之间互相独立；同一配置里允许重复添加同一任务。
 - 支持 PI 声明的 agent（自定义识别器 / 动作）。
@@ -80,7 +80,7 @@ MaaFwApp 本身不包含具体业务资源。Android 上要把资源在**构建�
 ```bash
 git clone https://github.com/Aliothmoon/MaaFwApp.git
 cd MaaFwApp
-python scripts/setup_maa_framework.py
+python scripts/setup_maa_framework.py --tag v5.13.0
 ./gradlew :app:installDebug          # Windows 用 .\gradlew.bat
 ```
 

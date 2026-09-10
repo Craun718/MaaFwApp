@@ -17,9 +17,8 @@ MaaFwApp 本身不包含业务资源。资源开发者写好 Project Interface �
 MaaFramework 的 `.so` 不在本仓库里，需要先铺：
 
 ```bash
-python scripts/setup_maa_framework.py              # latest
-python scripts/setup_maa_framework.py --tag v5.x.x
-python scripts/setup_maa_framework.py --abi arm64-v8a
+python scripts/setup_maa_framework.py --tag v5.13.0
+python scripts/setup_maa_framework.py --tag v5.13.0 --abi arm64-v8a
 ```
 
 ## 打包配方
