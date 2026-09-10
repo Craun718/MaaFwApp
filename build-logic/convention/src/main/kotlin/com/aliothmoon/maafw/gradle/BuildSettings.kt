@@ -15,12 +15,23 @@ private fun Project.loadLocalProperties(): Properties = Properties().apply {
 internal fun Project.pathSetting(key: String, envName: String): String? =
     (loadLocalProperties().getProperty(key) ?: System.getenv(envName))?.takeIf { it.isNotBlank() }
 
+/** Text switches use the same precedence as path switches */
+internal fun Project.textSetting(key: String, envName: String): String? =
+    (loadLocalProperties().getProperty(key) ?: System.getenv(envName))?.takeIf { it.isNotBlank() }
+
 /**
  * Signing material flips the precedence: a release build injects env vars and a stale
  * local.properties entry must not override them
  */
 internal fun Project.signingSetting(envName: String, key: String): String =
     System.getenv(envName) ?: loadLocalProperties().getProperty(key, "")
+
+/**
+ * The MaaFramework release the jniLibs were laid out from, written by setup_maa_framework.py
+ * Absent until that script has run here, and the about card hides the row rather than guess
+ */
+internal fun Project.maaFrameworkVersion(): String =
+    rootProject.file(".maafwversion").takeIf { it.isFile }?.readText()?.trim().orEmpty()
 
 /** Comma separated list switch, read from local.properties only */
 internal fun Project.listSetting(key: String): List<String> =
