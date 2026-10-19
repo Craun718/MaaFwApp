@@ -64,11 +64,15 @@ class WatchdogNoticeHookTest {
         val runner = RecordingEventRunnerPort()
         val journal = RecordingJournal()
         var notifications = 0
+        val rememberedPackages = mutableListOf<String>()
+        val recordedPackages = mutableListOf<String>()
         val hook = WatchdogNoticeHook(
             watchdogState = watchdog,
             servicePort = FakePrivilegedServicePort(service),
             runnerPort = runner,
             notifyGameGone = { notifications++ },
+            rememberGamePackage = { rememberedPackages += it },
+            recordGameExit = { recordedPackages += it },
             journal = journal,
             scope = backgroundScope,
         )
@@ -81,6 +85,8 @@ class WatchdogNoticeHookTest {
         assertEquals(listOf(RunNote.Error), journal.notes.map { it.first })
         assertEquals(1, runner.stopCount)
         assertEquals(1, notifications)
+        assertEquals(listOf("com.example.game"), rememberedPackages)
+        assertEquals(listOf("com.example.game"), recordedPackages)
     }
 
     @Test
@@ -94,6 +100,8 @@ class WatchdogNoticeHookTest {
             servicePort = FakePrivilegedServicePort(),
             runnerPort = runner,
             notifyGameGone = { notifications++ },
+            rememberGamePackage = {},
+            recordGameExit = {},
             journal = journalist,
             scope = backgroundScope,
         )
