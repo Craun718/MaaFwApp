@@ -5,6 +5,7 @@ import com.aliothmoon.maafw.MaaDispatchers
 import com.aliothmoon.maafw.config.UserConfigurationStore
 import com.aliothmoon.maafw.config.passwordPlaintexts
 import com.aliothmoon.maafw.i18n.LocalizedTextRenderer
+import com.aliothmoon.maafw.notification.NotificationCenter
 import com.aliothmoon.maafw.overlay.OverlayController
 import com.aliothmoon.maafw.overlay.screensaver.ScreenSaverOverlayManager
 import com.aliothmoon.maafw.runner.AutoSleepHook
@@ -180,6 +181,8 @@ val runnerModule = module {
                 WatchdogNoticeHook(
                     watchdogState = get<PermissionGateway>().watchdogState,
                     servicePort = get(),
+                    runnerPort = get(),
+                    notifyGameGone = { get<NotificationCenter>().notifyGameGoneAborted() },
                     journal = get(),
                     scope = get(named<AppCoroutineScope>()),
                 ),

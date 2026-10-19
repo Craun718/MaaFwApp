@@ -6,6 +6,7 @@ import com.aliothmoon.maafw.i18n.uiTextFormatted
 import com.aliothmoon.maafw.i18n.uiTextOf
 import com.aliothmoon.maafw.privileged.PrivilegedServicePort
 import com.aliothmoon.maafw.privileged.WatchdogState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.dropWhile
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 
 /**
  * 目标应用在虚拟屏上掉了，把它写进本轮的运行日志
@@ -28,6 +30,8 @@ import kotlinx.coroutines.withContext
 class WatchdogNoticeHook(
     private val watchdogState: StateFlow<WatchdogState>,
     private val servicePort: PrivilegedServicePort,
+    private val runnerPort: RunnerPort,
+    private val notifyGameGone: suspend () -> Unit,
     private val journal: RunJournal,
     private val scope: CoroutineScope,
 ) : RunEnvHook {
@@ -46,9 +50,38 @@ class WatchdogNoticeHook(
                 .dropWhile { it.isLost }
                 .distinctUntilChanged()
                 .filter { it.isLost }
-                .collect { state -> journal.note(ctx.executionId, RunNote.Warning, describe(state)) }
+                .collect { state ->
+                    val isDead = state == WatchdogState.APP_DIED
+                    journal.note(
+                        ctx.executionId,
+                        if (isDead) RunNote.Error else RunNote.Warning,
+                        describe(state),
+                    )
+                    if (isDead) {
+                        try {
+                            notifyGameGone()
+                        } catch (cancellation: CancellationException) {
+                            throw cancellation
+                        } catch (e: Throwable) {
+                            Timber.w(e, "failed to notify that the game process exited")
+                        }
+                        stopRun(ctx.executionId)
+                    }
+                }
         }
         return EngageResult.Engaged { job.cancel() }
+    }
+
+    /**
+     * 游戏主进程都没了，后面的任务链只会一路识别超时。
+     * 日志先落，保证 stop 引发的收尾/关日志不会把原因吞掉。
+     */
+    private suspend fun stopRun(executionId: String) {
+        when (val result = runnerPort.stop()) {
+            RunnerCommandResult.Accepted -> Unit
+            is RunnerCommandResult.Rejected ->
+                Timber.w(result.error, "app died, but stopping run %s was rejected: %s", executionId, result.reason)
+        }
     }
 
     private suspend fun describe(state: WatchdogState) = uiTextOf(
