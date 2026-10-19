@@ -11,7 +11,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.dropWhile
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -32,6 +31,8 @@ class WatchdogNoticeHook(
     private val servicePort: PrivilegedServicePort,
     private val runnerPort: RunnerPort,
     private val notifyGameGone: suspend () -> Unit,
+    private val rememberGamePackage: suspend (String) -> Unit,
+    private val recordGameExit: suspend (String) -> Unit,
     private val journal: RunJournal,
     private val scope: CoroutineScope,
 ) : RunEnvHook {
@@ -49,15 +50,36 @@ class WatchdogNoticeHook(
                 // 上一轮留下的坏状态还没被 2s 轮询刷掉，别拿它当本轮的事
                 .dropWhile { it.isLost }
                 .distinctUntilChanged()
-                .filter { it.isLost }
                 .collect { state ->
                     val isDead = state == WatchdogState.APP_DIED
+                    val targetPackage = targetPackageName()
+                    if (state == WatchdogState.WATCHING || state == WatchdogState.DISPLAY_DRIFT) {
+                        targetPackage?.let { packageName ->
+                            try {
+                                rememberGamePackage(packageName)
+                            } catch (cancellation: CancellationException) {
+                                throw cancellation
+                            } catch (e: Throwable) {
+                                Timber.w(e, "failed to remember game package: %s", packageName)
+                            }
+                        }
+                    }
+                    if (!state.isLost) return@collect
                     journal.note(
                         ctx.executionId,
                         if (isDead) RunNote.Error else RunNote.Warning,
-                        describe(state),
+                        describe(state, targetPackage),
                     )
                     if (isDead) {
+                        targetPackage?.let { packageName ->
+                            try {
+                                recordGameExit(packageName)
+                            } catch (cancellation: CancellationException) {
+                                throw cancellation
+                            } catch (e: Throwable) {
+                                Timber.w(e, "failed to record game process exit: %s", packageName)
+                            }
+                        }
                         try {
                             notifyGameGone()
                         } catch (cancellation: CancellationException) {
@@ -84,20 +106,18 @@ class WatchdogNoticeHook(
         }
     }
 
-    private suspend fun describe(state: WatchdogState) = uiTextOf(
+    private suspend fun describe(state: WatchdogState, targetPackage: String?) = uiTextOf(
         when (state) {
             WatchdogState.APP_DIED -> R.string.run_log_app_process_gone
             else -> R.string.run_log_app_left_display
         },
-        targetPackage(),
+        targetPackage?.let(::uiTextFormatted) ?: uiTextOf(R.string.run_log_app_unknown),
     )
 
     /** 包名只有特权进程知道：外壳不维护包名表，`start_app` 的目标来自 pipeline */
-    private suspend fun targetPackage() = withContext(MaaDispatchers.IO) {
+    private suspend fun targetPackageName(): String? = withContext(MaaDispatchers.IO) {
         runCatching { servicePort.serviceOrNull()?.watchdogTargetPackage() }
             .getOrNull()
             ?.takeIf { it.isNotBlank() }
-            ?.let(::uiTextFormatted)
-            ?: uiTextOf(R.string.run_log_app_unknown)
     }
 }

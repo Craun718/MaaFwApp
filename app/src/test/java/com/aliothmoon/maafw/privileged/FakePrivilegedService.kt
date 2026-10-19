@@ -86,6 +86,24 @@ open class FakePrivilegedService : RemoteService {
         return true
     }
 
+    var processExitRecordsJson: String = "[]"
+    var lastProcessExitQuery: Triple<String, Long, Int>? = null
+        private set
+
+    override fun getProcessExitRecords(packageName: String?, sinceMs: Long, maxNum: Int): String {
+        lastProcessExitQuery = Triple(packageName.orEmpty(), sinceMs, maxNum)
+        return processExitRecordsJson
+    }
+
+    var systemLog = ""
+    var lastSystemLogQuery: List<Any>? = null
+        private set
+
+    override fun dumpSystemLog(sinceMs: Long, untilMs: Long, pid: Int, processPrefix: String?): String {
+        lastSystemLogQuery = listOf(sinceMs, untilMs, pid, processPrefix.orEmpty())
+        return systemLog
+    }
+
     // ── 其余：本测试用不到，保持无副作用的零值 ──
 
     override fun destroy() = Unit

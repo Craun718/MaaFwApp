@@ -463,4 +463,26 @@ class MaaFrameworkRunnerPortTest {
         assertTrue(runner.state.value.latestResult is ExecutionResult.Cancelled)
         assertEquals(1, events.count { it.event is RunnerEvent.ExecutionFinished })
     }
+
+    @Test
+    fun `service replacement during startRun stops the old run and rejects`() = runTest(dispatcher) {
+        lateinit var servicePort: FakePrivilegedServicePort
+        val replacement = FakePrivilegedService()
+        val service = object : FakePrivilegedService() {
+            override fun startRun(runPlanJson: String?): Boolean {
+                val accepted = super.startRun(runPlanJson)
+                servicePort.replaceService(replacement)
+                return accepted
+            }
+        }
+        servicePort = FakePrivilegedServicePort(service)
+        val (runner, _) = port(this, service, servicePort)
+
+        val rejected = runner.start(plan(), "e1") as RunnerCommandResult.Rejected
+
+        assertTrue(rejected.reason.isResource(R.string.msg_fail_privileged_replaced))
+        assertEquals(1, service.stopRunCount)
+        assertEquals(0, replacement.stopRunCount)
+        assertEquals(RunnerPhase.Idle, runner.state.value.phase)
+    }
 }

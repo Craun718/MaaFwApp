@@ -31,6 +31,7 @@ import com.aliothmoon.maafw.runner.MaaFrameworkRunnerPort
 import com.aliothmoon.maafw.runner.NotificationHook
 import com.aliothmoon.maafw.runner.PreviewPort
 import com.aliothmoon.maafw.runner.PrivilegedFocusContentResolver
+import com.aliothmoon.maafw.runner.ProcessExitRecorder
 import com.aliothmoon.maafw.runner.RemotePreviewPort
 import com.aliothmoon.maafw.runner.RunDurationLimitHook
 import com.aliothmoon.maafw.runner.RunKeepAlive
@@ -104,6 +105,7 @@ val runnerModule = module {
             projectRepository = get(),
             settings = get(),
             runnerPort = get(),
+            servicePort = get(),
             scope = get(named<AppCoroutineScope>()),
             secrets = { configurationStore.data.first().passwordPlaintexts() },
         )
@@ -121,6 +123,13 @@ val runnerModule = module {
         )
     }
     single<RunJournal> { get<RunLogRecorder>() }
+
+    single {
+        ProcessExitRecorder(
+            context = androidContext(),
+            servicePort = get(),
+        )
+    }
 
     single {
         GameFpsWatcher(
@@ -183,6 +192,8 @@ val runnerModule = module {
                     servicePort = get(),
                     runnerPort = get(),
                     notifyGameGone = { get<NotificationCenter>().notifyGameGoneAborted() },
+                    rememberGamePackage = { packageName -> get<ProcessExitRecorder>().rememberGamePackage(packageName) },
+                    recordGameExit = { packageName -> get<ProcessExitRecorder>().recordGame(packageName) },
                     journal = get(),
                     scope = get(named<AppCoroutineScope>()),
                 ),
