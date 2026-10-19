@@ -40,6 +40,9 @@ fun RunLaunchResult.toScheduleOutcome(): ScheduleLaunchOutcome = when (this) {
     is RunLaunchResult.Invalid ->
         ScheduleLaunchOutcome(TriggerResult.FAILED_START, TriggerFailureReason.INVALID_PLAN)
 
+    is RunLaunchResult.InvalidTaskSelection ->
+        ScheduleLaunchOutcome(TriggerResult.FAILED_START, TriggerFailureReason.INVALID_PLAN, reason)
+
     is RunLaunchResult.Rejected ->
         ScheduleLaunchOutcome(TriggerResult.FAILED_START, TriggerFailureReason.REJECTED, reason)
 
