@@ -16,6 +16,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -49,6 +50,7 @@ object RemoteServiceManager : PrivilegedServicePort {
     private val currentBinder = AtomicReference<IBinder>()
     private var currentDeathRecipient: BindingDeathRecipient? = null // guarded by lock
     private val _state = MutableStateFlow<ServiceState>(ServiceState.Disconnected)
+    private val _serviceGeneration = MutableStateFlow(0L)
 
     private val timeoutScope = CoroutineScope(MaaDispatchers.Default + SupervisorJob())
     private val connectAttempt = AtomicInteger(0)
@@ -72,6 +74,8 @@ object RemoteServiceManager : PrivilegedServicePort {
         .map { it.toPrivilegedServiceState() }
         .stateIn(timeoutScope, SharingStarted.Eagerly, PrivilegedServiceState.Disconnected)
 
+    override val serviceGeneration: StateFlow<Long> = _serviceGeneration.asStateFlow()
+
     override val currentBackend: RemoteBackend? get() = boundBackend
 
     // 携带绑定时的 binder，迟到的死亡通知靠身份比对丢弃
@@ -82,6 +86,7 @@ object RemoteServiceManager : PrivilegedServicePort {
     private val connectorCallbacks = object : RemoteServiceConnectorBackend.Callbacks {
         override fun onConnected(backend: RemoteBackend, binder: IBinder) {
             val service: RemoteService
+            var binderChanged = false
             synchronized(lock) {
                 if (boundBackend != backend) {
                     ServiceBootLogger.event("CB_ON_CONNECTED_STALE", "backend=$backend bound=$boundBackend")
@@ -89,6 +94,7 @@ object RemoteServiceManager : PrivilegedServicePort {
                     return
                 }
                 ServiceBootLogger.event("CB_ON_CONNECTED", "backend=$backend")
+                binderChanged = currentBinder.get() !== binder
                 clearCurrentBinderLocked()
                 val recipient = BindingDeathRecipient(binder)
                 try {
@@ -105,6 +111,9 @@ object RemoteServiceManager : PrivilegedServicePort {
                 currentDeathRecipient = recipient
                 service = RemoteService.Stub.asInterface(binder)
                 _state.value = ServiceState.Connected(service)
+                if (binderChanged) {
+                    _serviceGeneration.value += 1
+                }
                 ServiceBootLogger.event("BINDER_CONNECTED", "backend=$backend linkToDeath ok")
             }
             runCatching { service.heartbeat(Process.myPid()) }

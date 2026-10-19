@@ -47,6 +47,9 @@ open class FakePrivilegedService : RemoteService {
         private set
     var stopRunCount: Int = 0
         private set
+    var stopRunResult: Boolean = true
+    var stopRunFailure: Throwable? = null
+    var isRunningResult: Boolean? = null
 
     override fun asBinder(): IBinder? = null
 
@@ -139,9 +142,10 @@ open class FakePrivilegedService : RemoteService {
     }
     override fun stopRun(): Boolean {
         stopRunCount++
-        return true
+        stopRunFailure?.let { throw it }
+        return stopRunResult
     }
-    override fun isRunning(): Boolean = running
+    override fun isRunning(): Boolean = isRunningResult ?: running
     override fun maaVersion(): String = "fake"
     override fun testUnlock(credential: String?): Int = unlockResult
 
@@ -155,7 +159,8 @@ open class FakePrivilegedService : RemoteService {
     override fun pollGestureRecord(): String = ""
     override fun cancelGestureRecord() = Unit
     override fun watchdogState(): Int = 0
-    override fun watchdogTargetPackage(): String = ""
+    var watchdogTargetPackageValue: String = ""
+    override fun watchdogTargetPackage(): String = watchdogTargetPackageValue
 
     /** 缓存帧要真 controller 才有；测试里没有可落盘的东西 */
     override fun saveCachedImage(path: String?): Boolean = false
@@ -174,8 +179,17 @@ class FakePrivilegedServicePort(
     private val _state = MutableStateFlow(PrivilegedServiceState.Connected)
     override val serviceState: StateFlow<PrivilegedServiceState> = _state.asStateFlow()
 
+    private val _serviceGeneration = MutableStateFlow(0L)
+    override val serviceGeneration: StateFlow<Long> = _serviceGeneration.asStateFlow()
+
     fun emit(state: PrivilegedServiceState) {
         _state.value = state
+    }
+
+    fun replaceService(next: RemoteService?) {
+        service = next
+        _serviceGeneration.value += 1
+        _state.value = if (next == null) PrivilegedServiceState.Disconnected else PrivilegedServiceState.Connected
     }
 
     override val currentBackend: RemoteBackend? = RemoteBackend.SHIZUKU
@@ -195,11 +209,13 @@ class FakePrivilegedServicePort(
 
     /** 非 null 时 [connect] 直接交回它；null 时按 [service] 在不在给 Connected / Failed */
     var connectResult: ServiceConnectResult? = null
+    var connectAction: (() -> Unit)? = null
     var connectCount: Int = 0
         private set
 
     override suspend fun connect(): ServiceConnectResult {
         connectCount++
+        connectAction?.invoke()
         connectResult?.let { return it }
         return if (service != null) {
             ServiceConnectResult.Connected
