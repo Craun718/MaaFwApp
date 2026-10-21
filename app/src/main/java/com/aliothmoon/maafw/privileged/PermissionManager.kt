@@ -265,8 +265,6 @@ class PermissionManager(
             // 已跳过就不再付 checkStatus 那次 IPC 的代价
             skipCheck -> ShizukuReadinessStage.Ready
             remoteState.configuredBackend != RemoteBackend.SHIZUKU -> ShizukuReadinessStage.Ready
-            // Sui 在启动时已 init，先报兼容性，别被下面的 shizukuAvailable 抢成 NeedAuth
-            ShizukuManager.isSui -> ShizukuReadinessStage.SuiAvailable
             remoteState.shizukuGranted -> ShizukuReadinessStage.Ready
             remoteState.shizukuAvailable -> ShizukuReadinessStage.NeedAuth
             else -> when (
@@ -274,7 +272,7 @@ class PermissionManager(
                     ShizukuInstallHelper.checkStatus(appContext, launchPackage)
                 }
             ) {
-                ShizukuInstallHelper.Status.SuiAvailable -> ShizukuReadinessStage.SuiAvailable
+                ShizukuInstallHelper.Status.SuiAvailable -> ShizukuReadinessStage.NeedAuth
                 ShizukuInstallHelper.Status.NotRunning -> ShizukuReadinessStage.NotRunning
                 ShizukuInstallHelper.Status.Ready -> ShizukuReadinessStage.NeedAuth
                 ShizukuInstallHelper.Status.NotInstalled -> ShizukuReadinessStage.NotInstalled

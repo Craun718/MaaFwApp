@@ -15,7 +15,7 @@ class ShizukuProcessPathContractTest {
         val command = ShizukuSpawner.wrapCommand(launcher, invocation)
 
         assertTrue(
-            "必须前台 exec，IRemoteProcess 才追踪到服务进程本身: $command",
+            "必须前台 exec，IRemoteProcess 才能观察 launcher 与服务退出: $command",
             command.contains("exec $invocation"),
         )
         assertFalse(
@@ -33,14 +33,13 @@ class ShizukuProcessPathContractTest {
     }
 
     @Test
-    fun launcherExecsDirectlyWhenAlreadyShell() {
+    fun launcherForksBeforeDemotingSoAppDeathDoesNotBypassCleanup() {
         val source = TestSources.resolve("src/main/native/launcher.c").readText()
-        val directExec = source.indexOf("getuid() == kShellUid")
         val fork = source.indexOf("fork()")
-        assertTrue(
-            "已是 shell 身份必须直接 exec 不 fork，否则 Shizuku 探活追踪的是 launcher 而非服务进程",
-            directExec >= 0 && fork >= 0 && directExec < fork,
-        )
+        val demote = source.indexOf("if (getuid() != kShellUid)")
+        assertTrue("launcher 应先 fork 再按身份降权，由独立服务进程完成清理", fork >= 0 && demote > fork)
+        assertFalse("两种后端最终都应以 shell 身份运行", source.contains("keep_root"))
+        assertTrue(source.contains("waitpid(child, &status, 0)"))
     }
 
     @Test

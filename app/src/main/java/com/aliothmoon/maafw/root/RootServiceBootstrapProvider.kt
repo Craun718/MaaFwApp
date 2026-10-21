@@ -19,7 +19,7 @@ class RootServiceBootstrapProvider : ContentProvider() {
             return super.call(method, arg, extras)
         }
         val callingUid = Binder.getCallingUid()
-        if (callingUid != Process.SHELL_UID && callingUid != 0) {
+        if (callingUid != Process.SHELL_UID) {
             Timber.w("Rejecting root bootstrap caller uid=%s", callingUid)
             return null
         }

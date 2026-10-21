@@ -57,7 +57,6 @@ typedef struct {
     const char *debug_name;
     const char *log_file;
     int uid;
-    bool keep_root;
 } LauncherArgs;
 
 /* ── 文件日志 ── */
@@ -117,7 +116,6 @@ static bool parse_args(int argc, char **argv, LauncherArgs *out) {
                 return false;
             }
         }
-        else if (strcmp(argv[i], "--keep-root") == 0) out->keep_root = true;
     }
 
     return out->apk_path != NULL
@@ -241,7 +239,7 @@ int main(int argc, char **argv) {
     }
 
     if (child == 0) {
-        if (getuid() != kShellUid && !args.keep_root) {
+        if (getuid() != kShellUid) {
             static const size_t kGidCount =
                     sizeof(kRequiredShellGids) / sizeof(kRequiredShellGids[0]);
 
