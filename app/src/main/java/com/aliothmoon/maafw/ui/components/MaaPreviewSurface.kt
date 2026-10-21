@@ -2,6 +2,7 @@ package com.aliothmoon.maafw.ui.components
 
 import android.graphics.PixelFormat
 import android.view.Surface
+import android.view.View
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.compose.foundation.layout.Box
@@ -50,6 +51,7 @@ fun MaaPreviewSurface(
     onSurfaceAvailable: (Surface) -> Unit,
     onSurfaceDestroyed: () -> Unit,
     modifier: Modifier = Modifier,
+    visible: Boolean = true,
     overlay: @Composable () -> Unit = {},
 ) {
     val currentResolution by rememberUpdatedState(resolution)
@@ -63,6 +65,7 @@ fun MaaPreviewSurface(
             key(surfaceEpoch) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
+                    update = { view -> view.visibility = if (visible) View.VISIBLE else View.INVISIBLE },
                     factory = { context ->
                         SurfaceView(context).apply {
                             holder.setFormat(PixelFormat.RGBA_8888)

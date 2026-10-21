@@ -89,6 +89,7 @@ internal fun rememberMovablePreview(
     onSurfaceCreated: () -> Unit,
     onSurfaceAvailable: (PlatformSurface) -> Unit,
     onSurfaceDestroyed: () -> Unit,
+    visible: () -> Boolean = { true },
 ): @Composable () -> Unit {
     val currentResolution by rememberUpdatedState(resolution)
     val currentMarkers by rememberUpdatedState(markers)
@@ -97,12 +98,14 @@ internal fun rememberMovablePreview(
     val currentCreated by rememberUpdatedState(onSurfaceCreated)
     val currentAvailable by rememberUpdatedState(onSurfaceAvailable)
     val currentDestroyed by rememberUpdatedState(onSurfaceDestroyed)
+    val currentVisible by rememberUpdatedState(visible)
     var lastSentSurface by remember { mutableStateOf<PlatformSurface?>(null) }
     return remember {
         movableContentOf {
             MaaPreviewSurface(
                 resolution = currentResolution,
                 surfaceEpoch = currentSurfaceEpoch(),
+                visible = currentVisible(),
                 onSurfaceCreated = { currentCreated() },
                 onSurfaceAvailable = { surface ->
                     // surfaceChanged 会重复触发，同一个 Surface 不重复跨进程上报

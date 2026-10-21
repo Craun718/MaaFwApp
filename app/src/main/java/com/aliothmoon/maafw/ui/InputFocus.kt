@@ -50,14 +50,14 @@ fun clearInputFocus(
     // 整窗的空白点击与每次拖拽都会打到这里；没有 View 持焦就无事可做，下面两次 IMM binder 不白付
     if (hostView.findFocus() == null) return
 
+    val focusedEditor = hostView.findFocus()?.takeIf { it !== hostView && it.onCheckIsTextEditor() }
     focusManager.clearFocus(force = force)
+    focusedEditor?.clearFocus()
 
-    val focused = hostView.findFocus()
-    if (focused != null && focused.onCheckIsTextEditor()) {
-        focused.clearFocus()
+    if (focusedEditor == null && keyboardController != null) {
+        keyboardController.hide()
+    } else {
+        val imm = hostView.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(hostView.windowToken, InputMethodManager.HIDE_NOT_ALWAYS)
     }
-
-    keyboardController?.hide()
-    val imm = hostView.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-    imm?.hideSoftInputFromWindow(hostView.windowToken, InputMethodManager.HIDE_NOT_ALWAYS)
 }

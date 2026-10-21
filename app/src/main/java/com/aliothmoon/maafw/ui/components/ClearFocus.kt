@@ -34,15 +34,16 @@ private class GestureState {
  * 只有另开窗口（Dialog / sheet）或自己截断了命中测试的那一层，才需要在自己这边补挂
  */
 @Composable
-fun Modifier.clearFocusOnBlankTap(): Modifier {
+internal fun Modifier.clearFocusOnBlankTap(preload: PagerPreloadState? = null): Modifier {
     val hostView = LocalView.current
     val latestClear by rememberUpdatedState(rememberInputFocusManager())
     var layoutCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val gesture = remember { GestureState() }
 
-    val scrollConnection = remember {
+    val scrollConnection = remember(preload) {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (available != Offset.Zero) preload?.onScroll()
                 // 必须有手指按着。输入框拿到焦点后的 bringIntoView 与 IME 起落引发的 relocate
                 // 走的也是 UserInput 这条源，只看 source 会在刚点进输入框时就把焦点清掉；
                 // 这两者都发生在抬手之后，真手势滚动时手指一定还在屏上
@@ -61,36 +62,45 @@ fun Modifier.clearFocusOnBlankTap(): Modifier {
     return this
         .onGloballyPositioned { layoutCoordinates = it }
         .nestedScroll(scrollConnection)
-        .pointerInput(Unit) {
-            awaitPointerEventScope {
-                while (true) {
-                    val event = awaitPointerEvent(PointerEventPass.Initial)
-                    // Initial pass 排在所有子节点之前，谁都还没来得及消费，这里看到的按压状态最全
-                    gesture.down = event.changes.fastAny { it.pressed }
-                    if (event.type != PointerEventType.Press) continue
-                    gesture.cleared = false
-                    // 仅 Android 文本编辑器 (悬浮窗 EditText); Compose TextField 的 findFocus 通常是整窗
-                    val focused = hostView.findFocus() ?: continue
-                    if (focused === hostView || !focused.onCheckIsTextEditor()) continue
-                    val change = event.changes.firstOrNull() ?: continue
-                    val coords = layoutCoordinates ?: continue
-                    if (!coords.isAttached) continue
-                    val posInWindow = coords.localToWindow(change.position)
-                    val loc = IntArray(2)
-                    focused.getLocationInWindow(loc)
-                    val x = posInWindow.x.toInt()
-                    val y = posInWindow.y.toInt()
-                    val inside = x in loc[0] until (loc[0] + focused.width) &&
-                        y in loc[1] until (loc[1] + focused.height)
-                    if (!inside) {
-                        latestClear.clear()
+        .pointerInput(preload) {
+            try {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        // Initial pass 排在所有子节点之前，谁都还没来得及消费，这里看到的按压状态最全
+                        gesture.down = event.changes.fastAny { it.pressed }
+                        preload?.onPointerInput(gesture.down)
+                        if (event.type != PointerEventType.Press || event.changes.any { it.previousPressed }) continue
+                        gesture.cleared = false
+                        // 仅 Android 文本编辑器 (悬浮窗 EditText); Compose TextField 的 findFocus 通常是整窗
+                        val focused = hostView.findFocus() ?: continue
+                        if (focused === hostView || !focused.onCheckIsTextEditor()) continue
+                        val change = event.changes.firstOrNull() ?: continue
+                        val coords = layoutCoordinates ?: continue
+                        if (!coords.isAttached) continue
+                        val posInWindow = coords.localToWindow(change.position)
+                        val loc = IntArray(2)
+                        focused.getLocationInWindow(loc)
+                        val x = posInWindow.x.toInt()
+                        val y = posInWindow.y.toInt()
+                        val inside = x in loc[0] until (loc[0] + focused.width) &&
+                            y in loc[1] until (loc[1] + focused.height)
+                        if (!inside && !gesture.cleared) {
+                            gesture.cleared = true
+                            latestClear.clear()
+                        }
                     }
                 }
+            } finally {
+                preload?.onPointerInput(false)
             }
         }
         .pointerInput(Unit) {
             detectTapGestures {
-                latestClear.clear()
+                if (!gesture.cleared) {
+                    gesture.cleared = true
+                    latestClear.clear()
+                }
             }
         }
 }

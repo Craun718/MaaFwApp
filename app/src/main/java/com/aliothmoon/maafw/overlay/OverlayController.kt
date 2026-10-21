@@ -209,11 +209,11 @@ class OverlayController(
                     // 不用 collectAsStateWithLifecycle：悬浮窗隐藏时 owner 停在 CREATED，
                     // 那样收不到运行态变化，再显示出来就是过期数据
                     val state by sessionViewModel.uiState.collectAsState()
-                    val logEntries by sessionViewModel.runLog.collectAsState()
+                    val logEntries = sessionViewModel.runLog.collectAsState()
                     val locked by isPanelLocked.collectAsState()
                     OverlayPanel(
                         state = state,
-                        logEntries = { logEntries },
+                        logEntries = { logEntries.value },
                         isLocked = locked,
                         onIntent = sessionViewModel::onIntent,
                         onBackToApp = ::bringAppToFront,

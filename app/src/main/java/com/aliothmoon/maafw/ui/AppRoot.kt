@@ -56,6 +56,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.SideEffect
+import com.aliothmoon.maafw.ui.components.collectWhileVisible
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -125,6 +127,8 @@ import com.aliothmoon.maafw.ui.components.MaaPromptDialog
 import com.aliothmoon.maafw.ui.components.PiInstallDialog
 import com.aliothmoon.maafw.ui.components.ShizukuReadinessDialog
 import com.aliothmoon.maafw.ui.components.UpdatePromptDialog
+import com.aliothmoon.maafw.ui.components.PagerPreloadState
+import com.aliothmoon.maafw.ui.components.rememberStagedBeyondViewportCount
 import com.aliothmoon.maafw.ui.components.clearFocusOnBlankTap
 import com.aliothmoon.maafw.ui.home.HomeScreen
 import com.aliothmoon.maafw.ui.logs.AppLogDetailScreen
@@ -190,14 +194,14 @@ private val BottomBarHeight = 56.dp
  * 的拖动一律被掐掉，二级页的列表看着像偶发拖不动
  */
 @Composable
-private fun Modifier.subPageOverlayInput(): Modifier = this
+private fun Modifier.subPageOverlayInput(preload: PagerPreloadState): Modifier = this
     .pointerInput(Unit) {
         awaitPointerEventScope {
             while (true) awaitPointerEvent()
         }
     }
     // 排在截断内侧，先于它拿到 Press
-    .clearFocusOnBlankTap()
+    .clearFocusOnBlankTap(preload)
 
 /** Route：收集 state、消费 Effect、承载四个主 tab 与二级页面的 NavHost；Session VM 是进程级单例 */
 @Composable
@@ -217,10 +221,10 @@ fun AppRoot(
     // 触点与运行日志各自单独一条流，不并进 SessionUiState（见 SessionViewModel）
     // 刻意不用 by 解构：在这一层读就等于让整棵树跟着触摸与日志频率重组，
     // 往下传取值函数，读推迟到真正显示它们的叶子
-    val previewMarkersState = viewModel.previewMarkers.collectAsStateWithLifecycle()
-    val gameFpsState = viewModel.gameFps.collectAsStateWithLifecycle()
+    val previewVisible = remember { mutableStateOf(false) }
+    val previewMarkersState = viewModel.previewMarkers.collectWhileVisible(previewVisible.value)
+    val gameFpsState = viewModel.gameFps.collectWhileVisible(previewVisible.value)
     val previewSurfaceEpochState = viewModel.previewSurfaceEpoch.collectAsStateWithLifecycle()
-    val runLogState = viewModel.runLog.collectAsStateWithLifecycle()
 
     // 语言重载唯一触发点：App/系统切语言都经 Activity 重建后到此
     val localeTag = LocalConfiguration.current.locales[0]?.toLanguageTag().orEmpty()
@@ -249,6 +253,7 @@ fun AppRoot(
             markers = { previewMarkersState.value },
             fps = { gameFpsState.value },
             surfaceEpoch = { previewSurfaceEpochState.value },
+            visible = { previewVisible.value },
             // 不等 setFixedSize 那一轮：搬一次家要 50ms+ 才对上尺寸，期间遮罩会盖住刚回来的画面
             onSurfaceCreated = { previewSurfaceReady = true },
             onSurfaceAvailable = {
@@ -285,6 +290,11 @@ fun AppRoot(
         val currentRoute = navBackStackEntry?.destination?.route
         val onSubPage = currentRoute != null && currentRoute !in Routes.mainTabs
         val pagerState = rememberPagerState(pageCount = { TopDestination.entries.size })
+        val preload = remember { PagerPreloadState() }
+        val tasksVisible = !onSubPage && pagerState.targetPage == TopDestination.Tasks.ordinal
+        val runLogState = viewModel.runLog.collectWhileVisible(tasksVisible && !isInPip)
+        val showPreview = isInPip || previewFullscreen || tasksVisible
+        SideEffect { previewVisible.value = showPreview }
         val scope = rememberCoroutineScope()
         var diagnosticsDialog by remember { mutableStateOf<List<Diagnostic>?>(null) }
         var confirmStartDialog by remember { mutableStateOf<SessionEffect.ConfirmStart?>(null) }
@@ -455,7 +465,7 @@ fun AppRoot(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .clearFocusOnBlankTap()
+                .clearFocusOnBlankTap(preload)
                 // 小窗期间钉在进小窗前的窗口尺寸下测量：按巴掌大重排会让任务列表丢掉视口外的行
                 .layout { measurable, constraints ->
                     val pinned = isInPip && fullWindow[0] > 0
@@ -531,9 +541,9 @@ fun AppRoot(
         ) { padding ->
             HorizontalPager(
                 state = pagerState,
-                // 不预组合的话，整页的首次组合与测量全落在切页动画的第一帧里：
-                // 实测任务页那一帧 193ms（7 个 TaskRow 逐个组合 45ms + measureAndLayout 31ms）
-                beyondViewportPageCount = 1,
+                beyondViewportPageCount = rememberStagedBeyondViewportCount(
+                    pagerState, TopDestination.entries.lastIndex, preload,
+                ),
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
@@ -556,7 +566,7 @@ fun AppRoot(
                         // 全屏时这里让位，同一份 previewContent 搬到下面的全屏宿主
                         previewContent = previewContent.takeUnless { previewFullscreen },
                         // settledPage 只在滑动落定后翻页，手势中途弹回去仍是旧页——组合≠可见
-                        isActivePage = pagerState.settledPage == page,
+                        isActivePage = tasksVisible,
                         backEnabled = pagerState.settledPage == page && !onSubPage,
                         pipOnHome = settingsState.pipOnHome,
                         runLog = { runLogState.value },
@@ -616,7 +626,7 @@ fun AppRoot(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .then(if (onSubPage) Modifier.subPageOverlayInput() else Modifier)
+                .then(if (onSubPage) Modifier.subPageOverlayInput(preload) else Modifier)
                 .imePadding(),
         ) {
             NavHost(

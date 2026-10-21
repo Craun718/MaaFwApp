@@ -16,6 +16,10 @@ import androidx.compose.material.icons.outlined.LockOpen
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.runtime.remember
+import com.aliothmoon.maafw.ui.components.PagerPreloadState
+import com.aliothmoon.maafw.ui.components.rememberStagedBeyondViewportCount
+import com.aliothmoon.maafw.ui.components.clearFocusOnBlankTap
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -54,6 +58,7 @@ fun OverlayPanel(
 ) {
     val pagerState = rememberPagerState(initialPage = 0) { OverlayPanelTab.entries.size }
     val scope = rememberCoroutineScope()
+    val preload = remember { PagerPreloadState() }
     val phase = state.runner.phase
 
     Surface(
@@ -66,7 +71,8 @@ fun OverlayPanel(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(MaaDesignTokens.Overlay.pad),
+                .padding(MaaDesignTokens.Overlay.pad)
+                .clearFocusOnBlankTap(preload),
             verticalArrangement = Arrangement.spacedBy(MaaDesignTokens.Overlay.gap),
         ) {
             PanelHeader(
@@ -82,7 +88,7 @@ fun OverlayPanel(
                     .fillMaxWidth()
                     .weight(1f),
                 userScrollEnabled = false,
-                beyondViewportPageCount = 1,
+                beyondViewportPageCount = rememberStagedBeyondViewportCount(pagerState, 1, preload),
             ) { page ->
                 when (OverlayPanelTab.entries[page]) {
                     OverlayPanelTab.TASKS -> OverlayTaskSplit(
