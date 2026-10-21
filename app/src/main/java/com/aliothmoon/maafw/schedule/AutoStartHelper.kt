@@ -6,7 +6,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
+import com.aliothmoon.maafw.util.device.Manufacturer
 import android.provider.Settings
 import androidx.core.content.edit
 import timber.log.Timber
@@ -81,17 +81,11 @@ object AutoStartHelper {
         ),
     )
 
-    private val RESTRICTIVE_MANUFACTURERS = setOf(
-        "xiaomi", "redmi", "oppo", "realme", "oneplus",
-        "vivo", "iqoo", "huawei", "honor", "samsung",
-        "meizu", "smartisan", "letv", "zte", "nubia",
-    )
-
     private fun component(pkg: String, cls: String): Intent =
         Intent().setComponent(ComponentName(pkg, cls))
 
     private fun isKnownRestrictiveManufacturer(): Boolean =
-        Build.MANUFACTURER.lowercase() in RESTRICTIVE_MANUFACTURERS
+        Manufacturer.isKnownRestrictive()
 
     /** 命中即停：一台设备只会属于一家厂商，全扫要白做 8 次跨进程 resolveActivity */
     private fun resolvableOemIds(context: Context): List<String> = listOfNotNull(

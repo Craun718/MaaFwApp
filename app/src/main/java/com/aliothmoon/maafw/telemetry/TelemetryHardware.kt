@@ -2,6 +2,7 @@ package com.aliothmoon.maafw.telemetry
 
 import android.app.ActivityManager
 import android.content.Context
+import com.aliothmoon.maafw.util.device.RomDetector
 import android.os.Build
 
 /**
@@ -20,6 +21,9 @@ internal object TelemetryHardware {
         put("os", "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
         put("device", "${Build.MANUFACTURER} ${Build.MODEL}".trim())
         put("abi", Build.SUPPORTED_ABIS.joinToString(","))
+        val rom = RomDetector.current
+        put("rom", rom.name)
+        put("rom_version", rom.version)
     }
 
     private fun cpu(): String {

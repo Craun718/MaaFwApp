@@ -2,6 +2,7 @@ package com.aliothmoon.maafw.notification.live
 
 import android.app.NotificationManager
 import android.content.Context
+import com.aliothmoon.maafw.util.device.Manufacturer
 import android.os.Build
 import android.os.SystemClock
 import androidx.core.app.NotificationManagerCompat
@@ -66,7 +67,7 @@ class LiveCapabilityProbe(
     private fun liveUpdateGranted(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.BAKLAVA) return false
         // 三星的 One UI 没给这项开关，查询恒为 false，但请求照样生效（对齐 MaaMeow）
-        if (Build.MANUFACTURER.equals("samsung", ignoreCase = true)) return true
+        if (Manufacturer.isSamsung()) return true
         return runCatching { manager.canPostPromotedNotifications() }.getOrDefault(false)
     }
 

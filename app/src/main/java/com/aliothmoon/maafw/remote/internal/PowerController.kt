@@ -1,5 +1,6 @@
 package com.aliothmoon.maafw.remote.internal
 
+import com.aliothmoon.maafw.util.device.Manufacturer
 import android.os.Build
 import com.aliothmoon.maafw.constant.AndroidVersions
 import com.aliothmoon.maafw.constant.DefaultDisplayConfig
@@ -31,10 +32,7 @@ object PowerController {
             Build.VERSION.SDK_INT >= AndroidVersions.API_29_ANDROID_10
 
         if (applyToMultiPhysicalDisplays
-            && Build.VERSION.SDK_INT >= AndroidVersions.API_34_ANDROID_14 && Build.BRAND.equals(
-                "honor",
-                ignoreCase = true
-            )
+            && Build.VERSION.SDK_INT >= AndroidVersions.API_34_ANDROID_14 && Manufacturer.isHonorBrand()
             && SurfaceControl.hasGetBuildInDisplayMethod()
         ) {
             applyToMultiPhysicalDisplays = false
