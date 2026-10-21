@@ -10,7 +10,9 @@ import timber.log.Timber
 object SuSpawner : ProcessSpawner {
 
     override fun wrapCommand(launcherPath: String, invocation: String): String =
-        "$invocation >/dev/null 2>&1 &"
+        "if nsenter -t 1 -m -- true 2>/dev/null; then " +
+                "nsenter -t 1 -m -- $invocation >/dev/null 2>&1 & " +
+                "else $invocation >/dev/null 2>&1 & fi"
 
     override fun spawn(command: String): SpawnHandle? {
         val result = Shell.cmd(command).exec()
