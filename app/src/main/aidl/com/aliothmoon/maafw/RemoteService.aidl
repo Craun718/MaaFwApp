@@ -60,7 +60,8 @@ interface RemoteService {
     boolean clearForcedDisplaySize() = 19;
 
     // ── 预览 ──
-    void setMonitorSurface(in Surface surface) = 20;
+    // SurfaceHolder 回调只投递；同一 binder 上的挂载与摘除按序处理。
+    oneway void setMonitorSurface(in Surface surface) = 20;
 
     oneway void setTouchCallback(ITouchEventCallback callback) = 21;
 
