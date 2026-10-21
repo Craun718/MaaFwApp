@@ -73,9 +73,9 @@ class ScheduleTriggerLog {
     }
 
     suspend fun readAll(): List<TriggerLogEntry> = withContext(MaaDispatchers.IO) {
-        val file = logFile()
-        if (!file.exists()) return@withContext emptyList()
         runCatching {
+            val file = logFile()
+            if (!file.exists()) return@runCatching emptyList()
             file.readLines()
                 .filter { it.isNotBlank() }
                 .mapNotNull { line -> runCatching { json.decodeFromString<TriggerLogEntry>(line) }.getOrNull() }

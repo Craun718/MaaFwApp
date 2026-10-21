@@ -180,7 +180,7 @@ abstract class ProcessServiceConnectorBackend(
 
     protected open fun debugLogFile(): File {
         val dir = AppPaths.DEBUG_DIR
-        dir.mkdirs()
+        runCatching { dir.mkdirs() }.onFailure { Timber.w(it, "Launch log directory unavailable") }
         return File(dir, logFileName)
     }
 

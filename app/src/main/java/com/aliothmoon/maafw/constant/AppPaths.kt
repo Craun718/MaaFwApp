@@ -1,6 +1,7 @@
 package com.aliothmoon.maafw.constant
 
 import android.content.Context
+import android.os.Environment
 import java.io.File
 
 /**
@@ -8,8 +9,8 @@ import java.io.File
  *
  * [init] 在 Application.onCreate 一口气解析所有目录并定值；不保留 Context 引用
  *
- * 外部存储不可用时 init 抛出 → app 启动即失败：PI/run/日志全依赖
- * 外部私有目录，不可用就没法降级，崩在启动比 UI 进去后处处报错更直接
+ * 外部存储暂未挂载时仍保留应有路径，日志写入失败可降级，PI 解包失败交给界面提示和重试。
+ * 不切到内部目录：提权进程必须与 App 看到同一份资源和日志。
  *
  * 与 RemoteBootTrace / ServiceBootLogger 同属进程级全局，不进 Koin：路径解析早于 DI 就绪
  */
@@ -31,9 +32,9 @@ object AppPaths {
         private set
 
     fun init(context: Context) {
-        val root = checkNotNull(context.getExternalFilesDir(null)) {
-            "The external private directory is unavailable (the external storage is not mounted)"
-        }
+        val root = context.getExternalFilesDir(null) ?: File(
+            Environment.getExternalStorageDirectory(), "Android/data/${context.packageName}/files",
+        )
         ROOT = root
         LOG_DIR = File(root, AppFiles.LOG_DIR)
         FOCUS_DIR = File(LOG_DIR, AppFiles.FOCUS_DIR)
