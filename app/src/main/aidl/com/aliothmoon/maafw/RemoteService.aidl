@@ -194,4 +194,6 @@ interface RemoteService {
 
     /** 替被杀的上一个提权进程翻死亡窗口的系统日志；由下一次连上的特权进程执行 */
     String dumpSystemLog(long sinceMs, long untilMs, int pid, String processPrefix) = 87;
+    // 本次解锁的步骤与耗时；不含 PIN、位数、轨迹或步数。
+    String getLastWakeTrace(long sinceElapsedMs) = 88;
 }

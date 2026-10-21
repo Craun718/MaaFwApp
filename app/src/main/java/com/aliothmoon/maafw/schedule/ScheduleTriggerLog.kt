@@ -47,6 +47,7 @@ data class TriggerLogEntry(
 data class TriggerStep(
     val hookId: String,
     val outcome: TriggerStepOutcome,
+    val diagnostic: String? = null,
 )
 
 @Serializable

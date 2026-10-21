@@ -108,6 +108,39 @@ class UnlockGestureReplayTest {
         assertEquals(gesture, UnlockGestureJson.decodeFromString(UnlockGesture.serializer(), json))
     }
 
+    @Test
+    fun failedDownIsDistinguishedFromAcceptedLaterEvents() {
+        val stats = UnlockGestureReplay.playWithStats(
+            listOf(InjectAction.Down(1, 2), InjectAction.Up(1, 2)),
+            proceed = { true },
+        ) { it !is InjectAction.Down }
+        assertEquals(Delivery.NONE, stats.downs)
+        assertEquals(Delivery.PARTIAL, stats.events)
+        assertFalse(stats.allAccepted)
+        assertTrue(stats.completed)
+        assertEquals("downs none, events partial", stats.toString())
+    }
+
+    @Test
+    fun sleepIsNotCountedAsDeliveredInput() {
+        val stats = UnlockGestureReplay.playWithStats(
+            listOf(InjectAction.Sleep(50), InjectAction.Down(1, 2)),
+            proceed = { true },
+        ) { it is InjectAction.Sleep }
+        assertEquals(Delivery.NONE, stats.events)
+    }
+
+    @Test
+    fun stoppedReplayKeepsDeliveryOfTheCompletedStroke() {
+        var asks = 0
+        val stats = UnlockGestureReplay.playWithStats(
+            listOf(InjectAction.Down(1, 2), InjectAction.Up(1, 2), InjectAction.Down(3, 4)),
+            proceed = { asks++ == 0 },
+        ) { true }
+        assertFalse(stats.completed)
+        assertTrue(stats.allAccepted)
+    }
+
     private fun gestureOf(vararg steps: UnlockStep) = UnlockGesture(
         screenWidth = 1080,
         screenHeight = 2220,

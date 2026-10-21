@@ -192,6 +192,13 @@ private fun TriggerLogRow(
                     color = MaterialTheme.colorScheme.error,
                 )
             }
+            entry.steps.mapNotNull { it.diagnostic }.forEach { diagnostic ->
+                Text(
+                    text = diagnostic,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             onFix?.let {
                 TextButton(onClick = it) {
                     Text(stringResource(R.string.schedule_health_fix))

@@ -961,4 +961,8 @@
     <string name="search_keywords_permissions">permission authorization overlay battery whitelist notification accessibility storage</string>
     <string name="search_keywords_screen_saver">screen saver blackout display off power saving</string>
     <string name="config_import_too_large">Configuration file is too large (maximum 8 MiB)</string>
+    <string name="wake_diagnostic_summary">Unlock: %1$s; credential ready: %2$s; recorded: %3$s\nPassword required: %4$s; screen on before wake: %5$s; locked before wake: %6$s</string>
+    <string name="wake_diagnostic_yes">yes</string>
+    <string name="wake_diagnostic_no">no</string>
+    <string name="wake_diagnostic_unknown">unknown</string>
 </resources>

@@ -90,6 +90,9 @@ open class FakePrivilegedService : RemoteService {
     var lastProcessExitQuery: Triple<String, Long, Int>? = null
         private set
 
+    var wakeTrace = ""
+    override fun getLastWakeTrace(sinceElapsedMs: Long): String = wakeTrace
+
     override fun getProcessExitRecords(packageName: String?, sinceMs: Long, maxNum: Int): String {
         lastProcessExitQuery = Triple(packageName.orEmpty(), sinceMs, maxNum)
         return processExitRecordsJson

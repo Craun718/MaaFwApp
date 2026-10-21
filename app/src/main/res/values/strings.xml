@@ -949,4 +949,8 @@
     <string name="search_keywords_permissions">权限 授权 悬浮窗 电池 白名单 通知 无障碍 存储</string>
     <string name="search_keywords_screen_saver">屏保 黑屏 息屏 熄屏 省电</string>
     <string name="config_import_too_large">配置文件过大，最大支持 8 MiB</string>
+    <string name="wake_diagnostic_summary">解锁：%1$s；凭证已配置：%2$s；录制时间：%3$s\n需要密码：%4$s；唤醒前亮屏：%5$s；唤醒前锁屏：%6$s</string>
+    <string name="wake_diagnostic_yes">是</string>
+    <string name="wake_diagnostic_no">否</string>
+    <string name="wake_diagnostic_unknown">未知</string>
 </resources>

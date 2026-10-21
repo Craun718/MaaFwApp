@@ -18,7 +18,7 @@ enum class HookOutcome {
  * 记 [hookId] 而不是把动作枚举进协议：挂载物是可扩展的，枚举一次就得改一次 schema。
  * id 是我们自己定的稳定字符串，展示时查表拿文案，查不到就直接显示 id
  */
-data class RunStep(val hookId: String, val outcome: HookOutcome)
+data class RunStep(val hookId: String, val outcome: HookOutcome, val diagnostic: com.aliothmoon.maafw.i18n.UiText? = null)
 
 /**
  * 收集发起过程

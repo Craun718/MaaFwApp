@@ -38,6 +38,8 @@ sealed interface EngageResult {
         val notRun: NotRunCause = NotRunCause.HookFailed,
         /** engage 崩了时编排层接住的那个异常，随拒绝原因进运行日志与 app.log */
         val error: Throwable? = null,
+        /** 可选诊断，交给触发日志；失败不改变本轮结局。 */
+        val diagnostic: UiText? = null,
     ) : EngageResult
 }
 

@@ -311,6 +311,9 @@ class RemoteServiceImpl : RemoteService.Stub() {
 
     // ── 预览 ──
 
+    override fun getLastWakeTrace(sinceElapsedMs: Long): String =
+        WakeUnlockController.lastTrace(sinceElapsedMs)
+
     override fun setMonitorSurface(surface: Surface?) {
         Ln.i("$TAG: setMonitorSurface(${surface != null})")
         NativeBridgeLib.setPreviewSurface(surface)

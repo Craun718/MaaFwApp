@@ -20,6 +20,9 @@ import java.io.File
 fun interface UnlockGestureReader {
     /** 没录过返回空串 */
     suspend fun readJson(): String
+
+    /** API 28 可用；没有可靠录制时间时为空。 */
+    suspend fun recordedAtMs(): Long? = null
 }
 
 /**
@@ -82,6 +85,10 @@ class UnlockGestureStore(private val context: Context) : UnlockGestureReader {
     override suspend fun readJson(): String = withContext(MaaDispatchers.IO) {
         val gesture = _gesture.value ?: read() ?: return@withContext ""
         UnlockGestureJson.encodeToString(UnlockGesture.serializer(), gesture)
+    }
+
+    override suspend fun recordedAtMs(): Long? = withContext(MaaDispatchers.IO) {
+        gestureFile.takeIf { it.isFile }?.lastModified()?.takeIf { it > 0 }
     }
 
     private suspend fun read(): UnlockGesture? = withContext(MaaDispatchers.IO) {

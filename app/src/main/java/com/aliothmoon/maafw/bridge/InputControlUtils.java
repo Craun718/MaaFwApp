@@ -180,6 +180,11 @@ public final class InputControlUtils {
         return next;
     }
 
+    /** 解锁回放前后清掉残留触点；任务运行中不得调用。 */
+    public static synchronized void cancelAll(int displayId) {
+        cancelGesture(displayId);
+    }
+
     private static void cancelGesture(int displayId) {
         if (!slots.isEmpty()) {
             MotionEvent cancel = obtainEvent(slots, SystemClock.uptimeMillis(), MotionEvent.ACTION_CANCEL, -1);

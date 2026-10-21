@@ -176,9 +176,15 @@ val runnerModule = module {
                 NotificationHook(get()),
                 PrivilegedConnectHook(get()),
                 AutoSleepHook(get()),
-                WakeUnlockHook(get(), get<AppSettingsManager>(), get<UnlockGestureStore>()) {
-                    androidContext().getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
-                },
+                WakeUnlockHook(
+                    get(), get<AppSettingsManager>(), get<UnlockGestureStore>(),
+                    keyguardLocked = {
+                        androidContext().getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+                    },
+                    passwordRequired = {
+                        androidContext().getSystemService(KeyguardManager::class.java)?.isDeviceSecure
+                    },
+                ),
                 ScreenSaverHook(get<AppSettingsManager>(), get()),
                 CloseTargetAppHook(get(), get<AppSettingsManager>()),
                 CountdownHook,

@@ -201,6 +201,32 @@ class EnvironmentHooksTest {
         assertTrue(hook.engage(scheduleContext()) is EngageResult.Failed)
     }
 
+    @Test
+    fun `wake diagnosis omits the pin and survives an old remote without trace support`() = runTest {
+        val service = object : FakePrivilegedService() {
+            override fun getLastWakeTrace(sinceElapsedMs: Long): String =
+                throw UnsupportedOperationException("old service")
+        }.apply { unlockResult = WakeUnlockResult.CREDENTIAL_REJECTED }
+        val settings = FakeAppSettingsGateway().apply {
+            wakeUnlockType.value = UnlockCredential.TYPE_PIN
+            wakeCredential.value = "952713"
+        }
+        val result = wakeHook(service, settings).engage(scheduleContext()) as EngageResult.Failed
+        assertNotNull(result.diagnostic)
+        org.junit.Assert.assertFalse(result.diagnostic.toString().contains("952713"))
+        assertTrue(result.reason.isResource(R.string.wake_result_credential_rejected))
+    }
+
+    @Test
+    fun `wake failure includes the trace from this attempt`() = runTest {
+        val service = FakePrivilegedService().apply {
+            unlockResult = WakeUnlockResult.WAKE_FAILED
+            wakeTrace = "+0ms unlock\n+5000ms wake failed"
+        }
+        val result = wakeHook(service, FakeAppSettingsGateway()).engage(scheduleContext()) as EngageResult.Failed
+        assertTrue(result.diagnostic.toString().contains("wake failed"))
+    }
+
     /** 报失败但锁屏已经不在（人脸先解开了、手机本就开着）：照常往下跑 */
     @Test
     fun `a failed unlock without a keyguard lets the run go on`() = runTest {

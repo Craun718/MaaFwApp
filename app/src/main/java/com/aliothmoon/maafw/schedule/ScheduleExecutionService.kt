@@ -213,7 +213,8 @@ class ScheduleExecutionService : Service() {
                 steps = RunStepSink {
                     steps += TriggerStep(
                         it.hookId,
-                        it.outcome.toTriggerStepOutcome()
+                        it.outcome.toTriggerStepOutcome(),
+                        it.diagnostic?.resolve(this),
                     )
                 },
                 signals = signals,

@@ -313,7 +313,7 @@ class RunLauncher(
                     if (release != null) HookOutcome.ENGAGED else HookOutcome.SKIPPED
                 is EngageResult.Failed -> HookOutcome.FAILED
             }
-            steps?.record(RunStep(hook.id, outcome))
+            steps?.record(RunStep(hook.id, outcome, (result as? EngageResult.Failed)?.diagnostic))
             if (release != null) engaged.addLast(release)
             if (result is EngageResult.Failed && hook.gating) {
                 return Halt(result.reason, RunEndReason.NotRun(result.notRun, result.reason, result.error))

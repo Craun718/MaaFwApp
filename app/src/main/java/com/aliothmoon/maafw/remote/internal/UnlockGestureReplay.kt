@@ -70,33 +70,55 @@ internal object UnlockGestureReplay {
      * @param proceed 每一笔按下前问一次，false 即停；已按下的那笔照常走到抬起，触摸焦点在按下时就定在锁屏窗口
      * @return false 表示被 [proceed] 叫停
      */
-    fun execute(actions: List<InjectAction>, proceed: () -> Boolean = { true }): Boolean =
-        withSensitiveInput { play(actions, proceed, ::inject) }
+    fun executeDetailed(actions: List<InjectAction>, proceed: () -> Boolean = { true }): ReplayStats =
+        withSensitiveInput {
+            InputControlUtils.cancelAll(Display.DEFAULT_DISPLAY)
+            try {
+                playWithStats(actions, proceed, ::inject)
+            } finally {
+                InputControlUtils.cancelAll(Display.DEFAULT_DISPLAY)
+            }
+        }
 
     internal fun play(
         actions: List<InjectAction>,
         proceed: () -> Boolean,
         sink: (InjectAction) -> Unit,
-    ): Boolean {
+    ): Boolean = playWithStats(actions, proceed) { sink(it); true }.completed
+
+    internal fun playWithStats(
+        actions: List<InjectAction>,
+        proceed: () -> Boolean,
+        sink: (InjectAction) -> Boolean,
+    ): ReplayStats {
+        var downs = 0
+        var downsOk = 0
+        var events = 0
+        var eventsOk = 0
+        var completed = true
         for (action in actions) {
-            if (action is InjectAction.Down && !proceed()) return false
-            sink(action)
+            if (action is InjectAction.Down && !proceed()) {
+                completed = false
+                break
+            }
+            val ok = sink(action)
+            if (action is InjectAction.Sleep) continue
+            events++
+            if (ok) eventsOk++
+            if (action is InjectAction.Down) {
+                downs++
+                if (ok) downsOk++
+            }
         }
-        return true
+        return ReplayStats(Delivery.of(downsOk, downs), Delivery.of(eventsOk, events), completed)
     }
 
-    private fun inject(action: InjectAction) {
-        when (action) {
-            is InjectAction.Sleep -> Thread.sleep(action.ms)
-            is InjectAction.Down ->
-                InputControlUtils.down(action.x, action.y, SINGLE_CONTACT, Display.DEFAULT_DISPLAY)
-
-            is InjectAction.Move ->
-                InputControlUtils.move(action.x, action.y, SINGLE_CONTACT, Display.DEFAULT_DISPLAY)
-
-            is InjectAction.Up ->
-                InputControlUtils.up(action.x, action.y, SINGLE_CONTACT, Display.DEFAULT_DISPLAY)
-        }
+    private fun inject(action: InjectAction): Boolean = when (action) {
+        is InjectAction.Sleep -> { Thread.sleep(action.ms); true }
+        is InjectAction.Down -> InputControlUtils.down(action.x, action.y, SINGLE_CONTACT, Display.DEFAULT_DISPLAY) ==
+            InputControlUtils.TouchResult.DELIVERED
+        is InjectAction.Move -> InputControlUtils.move(action.x, action.y, SINGLE_CONTACT, Display.DEFAULT_DISPLAY)
+        is InjectAction.Up -> InputControlUtils.up(action.x, action.y, SINGLE_CONTACT, Display.DEFAULT_DISPLAY)
     }
 
     private fun press(x: Int, y: Int, holdMs: Long): List<InjectAction> = listOf(
@@ -104,4 +126,21 @@ internal object UnlockGestureReplay {
         InjectAction.Sleep(holdMs.coerceAtLeast(0)),
         InjectAction.Up(x, y),
     )
+}
+
+/** 不记录事件个数：点按录制的个数可能透露 PIN 位数。 */
+internal enum class Delivery(val label: String) {
+    NONE("none"), PARTIAL("partial"), ALL("all");
+    companion object {
+        fun of(ok: Int, total: Int): Delivery = when {
+            ok == 0 -> NONE
+            ok == total -> ALL
+            else -> PARTIAL
+        }
+    }
+}
+
+internal data class ReplayStats(val downs: Delivery, val events: Delivery, val completed: Boolean) {
+    val allAccepted: Boolean get() = events == Delivery.ALL
+    override fun toString(): String = "downs ${downs.label}, events ${events.label}"
 }

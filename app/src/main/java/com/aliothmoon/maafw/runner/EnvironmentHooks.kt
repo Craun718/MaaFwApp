@@ -1,6 +1,12 @@
 package com.aliothmoon.maafw.runner
 
+import android.os.SystemClock
 import com.aliothmoon.maafw.MaaDispatchers
+import com.aliothmoon.maafw.privileged.callWithTimeout
+import com.aliothmoon.maafw.i18n.uiTextLines
+import com.aliothmoon.maafw.i18n.uiTextFromFramework
+import com.aliothmoon.maafw.schedule.wakeDiagnosticText
+import kotlin.time.Duration.Companion.seconds
 import com.aliothmoon.maafw.RemoteService
 import com.aliothmoon.maafw.constant.WakeUnlockResult
 import com.aliothmoon.maafw.domain.RunMode
@@ -160,6 +166,7 @@ class WakeUnlockHook(
     private val settings: AppSettingsGateway,
     private val gestures: UnlockGestureReader,
     private val keyguardLocked: () -> Boolean,
+    private val passwordRequired: () -> Boolean? = { null },
 ) : RunEnvHook {
 
     override val id: String = ID
@@ -175,8 +182,9 @@ class WakeUnlockHook(
         // 用户正对着亮屏解锁的手机按按钮，解一次是空操作。没有总开关：到点总要亮屏
         if (ctx.trigger !is RunTrigger.Schedule) return EngageResult.Skipped()
 
+        val type = settings.wakeUnlockType.value
         val credential = UnlockCredential.of(
-            type = settings.wakeUnlockType.value,
+            type = type,
             pin = settings.wakeCredential.value,
             gestureJson = if (settings.wakeUnlockType.value == UnlockCredential.TYPE_GESTURE) {
                 gestures.readJson()
@@ -184,6 +192,10 @@ class WakeUnlockHook(
                 ""
             },
         )
+        val beforeLocked = runCatching { keyguardLocked() }.getOrNull()
+        val secure = runCatching { passwordRequired() }.getOrNull()
+        val beforeOn = servicePort.callConnecting<Boolean?>("wake snapshot", null) { it.isScreenOn() }
+        val since = SystemClock.elapsedRealtime()
         val code = servicePort.callConnecting("unlock", WakeUnlockResult.IPC_FAILED) {
             when (credential) {
                 UnlockCredential.Swipe -> it.unlock("")
@@ -193,7 +205,23 @@ class WakeUnlockHook(
         }
         val result = WakeResult.fromCodeOrNull(code)
         if (result?.isUnlocked == true || !keyguardLocked()) return EngageResult.Skipped()
-        return EngageResult.Failed(result?.message ?: uiTextOf(R.string.wake_result_unknown, code))
+        val diagnostic = try {
+            val recordedAt = if (type == UnlockCredential.TYPE_GESTURE) gestures.recordedAtMs() else null
+            val trace = servicePort.callWithTimeout(2.seconds) { it.getLastWakeTrace(since) }
+            uiTextLines(
+                wakeDiagnosticText(type, credential.isReady, recordedAt, secure, beforeOn, beforeLocked),
+                uiTextFromFramework(trace),
+            )
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Exception) {
+            Timber.w(error, "Unable to collect wake unlock diagnosis")
+            null
+        }
+        return EngageResult.Failed(
+            result?.message ?: uiTextOf(R.string.wake_result_unknown, code),
+            diagnostic = diagnostic,
+        )
     }
 
     companion object {
