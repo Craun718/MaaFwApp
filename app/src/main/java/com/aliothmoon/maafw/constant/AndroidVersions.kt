@@ -17,5 +17,6 @@ object AndroidVersions {
     const val API_32_ANDROID_12L = Build.VERSION_CODES.S_V2
     const val API_33_ANDROID_13 = Build.VERSION_CODES.TIRAMISU
     const val API_34_ANDROID_14 = Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+    const val API_37_ANDROID_17 = 37
     const val API_35_ANDROID_15 = Build.VERSION_CODES.VANILLA_ICE_CREAM
 }

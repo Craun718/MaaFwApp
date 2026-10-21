@@ -102,6 +102,7 @@ object AppWatchdog {
         val top = (ActivityUtils.probeDisplay(displayId) as? ActivityUtils.DisplayOccupancy.Occupied)?.topPackage
         if (top != null) {
             if (targetPackage == null) Ln.i("AppWatchdog: target acquired: $top")
+            ActivityUtils.excludeFromRecents(top, displayId)
             targetPackage = top
             driftFirstSeenMs = 0L
             driftRepinAttempts = 0

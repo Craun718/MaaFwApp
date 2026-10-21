@@ -267,7 +267,10 @@ class RemoteServiceImpl : RemoteService.Stub() {
         val displayId = VirtualDisplayManager.getDisplayId()
         if (displayId == DefaultDisplayConfig.DISPLAY_NONE) return true
         return ActivityUtils.isAppOnDisplay(packageName, displayId).also { onDisplay ->
-            if (onDisplay) GameFpsMonitor.ensureStarted(packageName)
+            if (onDisplay) {
+                ActivityUtils.excludeFromRecents(ActivityUtils.packageNameOf(packageName), displayId)
+                GameFpsMonitor.ensureStarted(packageName)
+            }
         }
     }
 
