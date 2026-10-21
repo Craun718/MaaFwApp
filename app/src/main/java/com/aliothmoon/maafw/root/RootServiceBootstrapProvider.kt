@@ -37,6 +37,9 @@ class RootServiceBootstrapProvider : ContentProvider() {
         return Bundle().apply {
             putBinder(RootServiceBootstrapRegistry.KEY_APP_BINDER, appBinder)
             putInt(RootServiceBootstrapRegistry.KEY_APP_PID, Process.myPid())
+            runCatching {
+                putParcelable(RootServiceBootstrapRegistry.KEY_LIFELINE, RootServiceBootstrapRegistry.lifelineReadEnd())
+            }.onFailure { Timber.w(it, "Unable to create service lifeline; using binder death") }
         }
     }
 

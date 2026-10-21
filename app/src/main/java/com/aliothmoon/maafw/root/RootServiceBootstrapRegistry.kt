@@ -1,6 +1,7 @@
 package com.aliothmoon.maafw.root
 
 import android.os.Binder
+import android.os.ParcelFileDescriptor
 import android.os.IBinder
 import kotlinx.coroutines.CompletableDeferred
 import java.util.concurrent.ConcurrentHashMap
@@ -20,9 +21,15 @@ object RootServiceBootstrapRegistry : BootstrapRegistry {
     const val KEY_SERVICE_BINDER = "service_binder"
     const val KEY_APP_BINDER = "app_binder"
     const val KEY_APP_PID = "app_pid"
+    const val KEY_LIFELINE = "lifeline"
 
     private val pendingBinders = ConcurrentHashMap<String, CompletableDeferred<IBinder>>()
     private val appLifecycleBinder = Binder()
+
+    // 写端常驻不写，App 退出时内核关闭写端，远端读到 EOF。
+    private val lifeline by lazy { ParcelFileDescriptor.createPipe() }
+
+    fun lifelineReadEnd(): ParcelFileDescriptor = lifeline[0].dup()
 
     override fun register(token: String): CompletableDeferred<IBinder> {
         return CompletableDeferred<IBinder>().also { pendingBinders[token] = it }

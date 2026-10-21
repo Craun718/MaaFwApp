@@ -4,10 +4,14 @@ import android.os.Binder;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Parcel;
+import android.os.ParcelFileDescriptor;
 
-import com.aliothmoon.maafw.RemoteService;
 import com.aliothmoon.maafw.third.Ln;
 
+import java.io.IOException;
+import java.io.InputStream;
+
+/** Shizuku / Root 共用的提权服务入口 */
 public final class RootServiceStarter {
 
     private static final String TAG = "RootServiceStarter";
@@ -20,26 +24,28 @@ public final class RootServiceStarter {
     private RootServiceStarter() {
     }
 
+    // app_process 进程没有系统建好的主 Looper，只能自己建
+    @SuppressWarnings("deprecation")
     public static void main(String[] args) {
-        System.err.println("[RootServiceStarter] main() entry");
+        System.err.println("[" + TAG + "] main() entry");
         if (Looper.getMainLooper() == null) {
             Looper.prepareMainLooper();
         }
 
         RootUserService.CreatedService createdService = RootUserService.create(args);
         if (createdService == null) {
-            System.err.println("[RootServiceStarter] RootUserService.create() returned null");
+            System.err.println("[" + TAG + "] service creation returned null");
             System.exit(1);
             return;
         }
-        System.err.println("[RootServiceStarter] RootUserService.create() ok, token=" + createdService.token());
+        System.err.println("[" + TAG + "] service created, token=" + createdService.token());
 
         if (!sendBinder(createdService)) {
-            System.err.println("[RootServiceStarter] sendBinder() failed");
-            System.exit(1);
+            System.err.println("[" + TAG + "] sendBinder() failed");
+            ProcessExit.exit("bootstrap failed", () -> destroyService(createdService.service()));
             return;
         }
-        System.err.println("[RootServiceStarter] sendBinder() ok, entering Looper");
+        System.err.println("[" + TAG + "] sendBinder() ok, entering Looper");
 
         Looper.loop();
         System.exit(0);
@@ -56,41 +62,44 @@ public final class RootServiceStarter {
             return false;
         }
 
-        primeHeartbeat(createdService.service(), result.appPid());
-
+        IBinder service = createdService.service();
         try {
-            IBinder.DeathRecipient recipient = () -> {
-                Ln.i(TAG + ": app process died, destroying root service");
-                destroyService(createdService.service());
-                Ln.i(TAG + ": root service destroy signal sent, exiting");
-                System.exit(0);
-            };
+            IBinder.DeathRecipient recipient = () -> onAppGone("app binder died", service);
             IBinder lifecycleBinder = result.lifecycleBinder();
             lifecycleBinder.linkToDeath(recipient, 0);
             appLifecycleBinder = lifecycleBinder;
             appDeathRecipient = recipient;
-            return true;
         } catch (Throwable tr) {
             Ln.e(TAG + ": failed to link app lifecycle binder", tr);
             return false;
         }
+        watchLifeline(result.lifeline(), service);
+        return true;
     }
 
-    /**
-     * 提前武装 RemoteServiceImpl 的 /proc 看门狗；
-     * 本 Starter 也用于启动 logcat 服务，非 RemoteService 的本地 binder 跳过
-     */
-    private static void primeHeartbeat(IBinder service, int appPid) {
-        if (appPid <= 0) {
+    /** 两路死讯先到先走：binder 通知要等线程池，被卡住的调用占满时送不到，lifeline 独占线程不受影响 */
+    private static void onAppGone(String reason, IBinder service) {
+        ProcessExit.exit(reason, () -> destroyService(service));
+    }
+
+    private static void watchLifeline(ParcelFileDescriptor lifeline, IBinder service) {
+        if (lifeline == null) {
+            Ln.w(TAG + ": no lifeline, relying on binder death only");
             return;
         }
-        try {
-            if (service.queryLocalInterface(RemoteService.class.getName()) instanceof RemoteService remote) {
-                remote.heartbeat(appPid);
+        Thread watcher = new Thread(() -> {
+            try (InputStream in = new ParcelFileDescriptor.AutoCloseInputStream(lifeline)) {
+                // App 从不写，阻塞到它退出、内核关掉写端时的 EOF
+                while (in.read() >= 0) {
+                }
+            } catch (IOException e) {
+                Ln.w(TAG + ": lifeline read failed, relying on binder death only", e);
+                return;
             }
-        } catch (Throwable tr) {
-            Ln.w(TAG + ": prime heartbeat failed", tr);
-        }
+            onAppGone("app lifeline closed", service);
+        }, "app-lifeline");
+        watcher.setDaemon(true);
+        watcher.start();
     }
 
     private static void destroyService(IBinder service) {
@@ -107,7 +116,7 @@ public final class RootServiceStarter {
             }
             service.transact(DESTROY_TRANSACTION_CODE, data, reply, Binder.FLAG_ONEWAY);
         } catch (Throwable tr) {
-            Ln.w(TAG + ": destroy root remote service failed", tr);
+            Ln.w(TAG + ": destroy remote service failed", tr);
         } finally {
             data.recycle();
             reply.recycle();

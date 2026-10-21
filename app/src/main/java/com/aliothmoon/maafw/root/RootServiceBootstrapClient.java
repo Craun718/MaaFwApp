@@ -2,8 +2,10 @@ package com.aliothmoon.maafw.root;
 
 import android.content.IContentProvider;
 import android.os.Binder;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.ParcelFileDescriptor;
 
 import com.aliothmoon.maafw.third.Ln;
 import com.aliothmoon.maafw.third.wrappers.ServiceManager;
@@ -11,10 +13,6 @@ import com.aliothmoon.maafw.third.wrappers.ServiceManager;
 public final class RootServiceBootstrapClient {
 
     private RootServiceBootstrapClient() {
-    }
-
-    /** 握手结果：app 生命周期 binder 与 app 进程 pid */
-    public record BootstrapResult(IBinder lifecycleBinder, int appPid) {
     }
 
     public static BootstrapResult attachRemoteService(String packageName, int userId, String token, IBinder serviceBinder) {
@@ -63,9 +61,9 @@ public final class RootServiceBootstrapClient {
                 System.err.println("[BootstrapClient] app lifecycle binder missing or dead");
                 return null;
             }
-            int appPid = reply.getInt(RootServiceBootstrapRegistry.KEY_APP_PID, 0);
-            System.err.println("[BootstrapClient] lifecycle binder received ok, appPid=" + appPid);
-            return new BootstrapResult(lifecycleBinder, appPid);
+            ParcelFileDescriptor lifeline = readLifeline(reply);
+            System.err.println("[BootstrapClient] lifecycle binder received ok, lifeline=" + (lifeline != null));
+            return new BootstrapResult(lifecycleBinder, lifeline);
         } catch (Throwable tr) {
             Ln.e("Failed to send binder back to app", tr);
             System.err.println("[BootstrapClient] exception: " + tr);
@@ -76,5 +74,24 @@ public final class RootServiceBootstrapClient {
                 ServiceManager.getActivityManager().removeContentProviderExternal(authority, providerToken);
             }
         }
+    }
+
+    @SuppressWarnings("deprecation")
+    private static ParcelFileDescriptor readLifeline(Bundle reply) {
+        try {
+            return Build.VERSION.SDK_INT >= 33
+                    ? reply.getParcelable(RootServiceBootstrapRegistry.KEY_LIFELINE, ParcelFileDescriptor.class)
+                    : reply.getParcelable(RootServiceBootstrapRegistry.KEY_LIFELINE);
+        } catch (Throwable tr) {
+            // 读不到只少一道防线，binder 死亡通知仍在
+            Ln.w("Root bootstrap lifeline unreadable", tr);
+            return null;
+        }
+    }
+
+    /**
+     * 握手结果：app 生命周期 binder 与 lifeline 读端（可能为 null）
+     */
+    public record BootstrapResult(IBinder lifecycleBinder, ParcelFileDescriptor lifeline) {
     }
 }

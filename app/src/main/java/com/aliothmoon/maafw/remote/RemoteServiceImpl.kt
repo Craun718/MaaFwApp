@@ -41,7 +41,7 @@ import android.provider.Settings
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
-import kotlin.system.exitProcess
+import com.aliothmoon.maafw.root.ProcessExit
 
 /**
  * 特权进程的入口对象：由 Shizuku 或 root starter 反射实例化，实例化即完成进程内初始化
@@ -82,14 +82,18 @@ class RemoteServiceImpl : RemoteService.Stub() {
     }
 
     override fun destroy() {
-        if (!destroyed.compareAndSet(false, true)) return
-        Ln.i("$TAG: destroy()")
-        stopDisplayWatchers()
-        InputControlUtils.setTouchCallback(null)
-        TextInputDispatcher.sink = null
-        runner.destroy()
-        cleanup()
-        exitProcess(0)
+        ProcessExit.exit("destroy requested") {
+            if (!destroyed.compareAndSet(false, true)) return@exit
+            step("display watchers") { stopDisplayWatchers() }
+            step("touch callback") { InputControlUtils.setTouchCallback(null) }
+            TextInputDispatcher.sink = null
+            // 先恢复用户设备状态；runner 的 native 清理最多等待 15 秒，可能卡住。
+            step("screen size") { ScreenManager.destroy() }
+            step("power") { PowerController.destroy() }
+            step("xmsf") { XmsfFirewall.restoreIfNeeded() }
+            step("runner") { runner.destroy() }
+            cleanup()
+        }
     }
 
     override fun exit() = destroy()

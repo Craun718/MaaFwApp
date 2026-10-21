@@ -9,7 +9,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.system.exitProcess
+import com.aliothmoon.maafw.root.ProcessExit
 
 /**
  * 跑在独立特权进程（:logcat / :root_logcat）里的 logcat 抓取实现
@@ -41,7 +41,12 @@ class LogcatCaptureServiceImpl : ILogcatService.Stub() {
         }.apply { name = "logcat-watchdog"; isDaemon = true }.start()
     }
 
-    override fun destroy() = exitProcess(0)
+    override fun destroy() {
+        ProcessExit.exit("logcat destroy requested") {
+            watchTargets.values.forEach { runCatching { it.destroyForcibly() } }
+            watchTargets.clear()
+        }
+    }
 
     override fun startCapture(appPid: Int, servicePid: Int, userDir: String) {
         val debugDir = File(userDir, AppFiles.DEBUG_DIR).apply { mkdirs() }

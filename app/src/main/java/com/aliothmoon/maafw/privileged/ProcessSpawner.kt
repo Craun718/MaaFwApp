@@ -9,8 +9,14 @@ interface ProcessSpawner {
     /** 执行拉起，失败抛异常；返回探活句柄，拉起方式不支持探活时返回 null */
     fun spawn(command: String): SpawnHandle?
 
+    fun findProcesses(processName: String): List<ResidualProcess>
+
+    fun forceKill(pids: List<Int>)
+
     fun killResidual(processName: String)
 }
+
+data class ResidualProcess(val pid: Int, val elapsed: String)
 
 interface SpawnHandle {
 
@@ -24,6 +30,19 @@ class ProcessExitedException(val exitCode: Int?) :
 
 internal fun shellQuote(value: String): String = "'${value.replace("'", "'\"'\"'")}'"
 
-/** SIGTERM 触发服务进程 shutdown hook 优雅清理 */
+/** SIGTERM 请求停止，退出清理由服务自己的生命周期监听负责 */
 internal fun killByNameCommand(processName: String): String =
     "kill $(pidof ${shellQuote(processName)}) 2>/dev/null"
+
+/** 没有同名进程时 pidof 失败、无输出 */
+internal fun findProcessesCommand(processName: String): String =
+    $$"p=$(pidof $${shellQuote(processName)}) && ps -o PID,ETIME -p ${p// /,}"
+
+/** 跳过表头，取 PID 与 ETIME 两列 */
+internal fun parseProcesses(lines: List<String>): List<ResidualProcess> = lines.mapNotNull { line ->
+    val cols = line.trim().split(Regex("\\s+"))
+    val pid = cols.firstOrNull()?.toIntOrNull() ?: return@mapNotNull null
+    ResidualProcess(pid, cols.getOrNull(1).orEmpty())
+}
+
+internal fun forceKillCommand(pids: List<Int>): String = "kill -9 ${pids.joinToString(" ")} 2>/dev/null"
