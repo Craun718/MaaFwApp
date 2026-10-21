@@ -1,5 +1,12 @@
 package com.aliothmoon.maafw.runner
 
+import com.aliothmoon.maafw.MaaDispatchers
+import io.mockk.every
+import io.mockk.mockkObject
+import io.mockk.unmockkObject
+import kotlinx.coroutines.Dispatchers
+import org.junit.Before
+import org.junit.After
 import com.aliothmoon.maafw.R
 import com.aliothmoon.maafw.RemoteService
 import com.aliothmoon.maafw.i18n.uiTextOf
@@ -29,6 +36,15 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class EnvironmentHooksTest {
+    @Before
+    fun setUp() {
+        mockkObject(MaaDispatchers)
+        every { MaaDispatchers.IO } returns Dispatchers.Unconfined
+    }
+
+    @After
+    fun tearDown() = unmockkObject(MaaDispatchers)
+
 
     private fun EngageResult.releaseOrNull(): Release? = when (this) {
         is EngageResult.Engaged -> release
