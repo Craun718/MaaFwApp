@@ -93,13 +93,13 @@ class RunForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         notificationFactory.ensureChannels()
-        // 必须先 startForeground 再判终态：慢一步就是 ForegroundServiceDidNotStartInTimeException
+        // 系统在新进程重建旧服务时没有运行轮次，不发前台通知、不申请后台 FGS。
         val initial = runnerPort.state.value
-        if (!startAsForeground(buildNotification(initial, recorder.liveUpdateStatus.value))) return
         if (!initial.phase.isBusy) {
             stopNow()
             return
         }
+        if (!startAsForeground(buildNotification(initial, recorder.liveUpdateStatus.value))) return
         observe()
     }
 
@@ -107,14 +107,14 @@ class RunForegroundService : Service() {
         if (foregroundDenied) return START_NOT_STICKY
         // 系统可能只走 onStartCommand；FGS 提升要在这里再保一次
         val snapshot = runnerPort.state.value
+        if (!snapshot.phase.isBusy) {
+            stopNow()
+            return START_NOT_STICKY
+        }
         if (!startAsForeground(buildNotification(snapshot, recorder.liveUpdateStatus.value))) {
             return START_NOT_STICKY
         }
-        if (!snapshot.phase.isBusy) {
-            stopNow()
-        } else {
-            observe()
-        }
+        observe()
         return START_NOT_STICKY
     }
 
