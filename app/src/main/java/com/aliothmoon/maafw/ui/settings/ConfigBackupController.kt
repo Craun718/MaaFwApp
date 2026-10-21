@@ -69,6 +69,7 @@ fun ConfigBackupController(
         when (result) {
             is ConfigReadResult.Ready -> pending = result.import
             is ConfigReadResult.Failed -> onMessage(resources.importError(result.error))
+            ConfigReadResult.TooLarge -> onMessage(resources.getString(R.string.config_import_too_large))
             ConfigReadResult.Unreadable -> onMessage(resources.getString(R.string.config_import_unreadable))
             ConfigReadResult.ProjectNotReady -> onMessage(resources.getString(R.string.config_import_not_ready))
         }

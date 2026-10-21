@@ -948,4 +948,5 @@
     <string name="search_keywords_overlay">悬浮窗 悬浮球 控制层 无障碍</string>
     <string name="search_keywords_permissions">权限 授权 悬浮窗 电池 白名单 通知 无障碍 存储</string>
     <string name="search_keywords_screen_saver">屏保 黑屏 息屏 熄屏 省电</string>
+    <string name="config_import_too_large">配置文件过大，最大支持 8 MiB</string>
 </resources>

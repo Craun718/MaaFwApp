@@ -960,4 +960,5 @@
     <string name="search_keywords_overlay">overlay floating ball control accessibility</string>
     <string name="search_keywords_permissions">permission authorization overlay battery whitelist notification accessibility storage</string>
     <string name="search_keywords_screen_saver">screen saver blackout display off power saving</string>
+    <string name="config_import_too_large">Configuration file is too large (maximum 8 MiB)</string>
 </resources>

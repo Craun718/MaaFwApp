@@ -28,7 +28,8 @@ sealed interface ConfigReadResult {
     data class Ready(val import: ConfigImport) : ConfigReadResult
     data class Failed(val error: ConfigImportError) : ConfigReadResult
 
-    /** 文件读不出来（权限没了、太大） */
+    /** 文件读不出来（权限没了等） */
+    data object TooLarge : ConfigReadResult
     data object Unreadable : ConfigReadResult
     data object ProjectNotReady : ConfigReadResult
 }
@@ -88,8 +89,8 @@ class ConfigBackupService(
                 while (true) {
                     val n = input.read(buffer)
                     if (n < 0) break
+                    if (n > MAX_FILE_BYTES - out.size()) return@withContext ConfigReadResult.TooLarge
                     out.write(buffer, 0, n)
-                    check(out.size() <= MAX_FILE_BYTES) { "configuration file too large" }
                 }
                 out.toByteArray().decodeToString()
             }
@@ -99,7 +100,9 @@ class ConfigBackupService(
     }
 
     /** 粘贴进来的 MXU 分享码 */
-    suspend fun parseText(text: String): ConfigReadResult = withContext(MaaDispatchers.IO) { parse(text, null) }
+    suspend fun parseText(text: String): ConfigReadResult = withContext(MaaDispatchers.IO) {
+        if (text.length > MAX_FILE_BYTES) ConfigReadResult.TooLarge else parse(text, null)
+    }
 
     private suspend fun parse(text: String, fileName: String?): ConfigReadResult {
         val definition = definition() ?: return ConfigReadResult.ProjectNotReady
