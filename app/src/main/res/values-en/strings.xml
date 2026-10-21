@@ -965,4 +965,8 @@
     <string name="wake_diagnostic_yes">yes</string>
     <string name="wake_diagnostic_no">no</string>
     <string name="wake_diagnostic_unknown">unknown</string>
+    <string name="precheck_adb_input_restricted">USB debugging (Security settings) is disabled. The system may block touch input. Enable it in Developer options or use Root.</string>
+    <string name="adb_input_enable_root">Enable with Root</string>
+    <string name="adb_input_enabled">USB debugging (Security settings) enabled. Start the task again.</string>
+    <string name="adb_input_enable_failed">Could not enable it. Enable USB debugging (Security settings) in Developer options.</string>
 </resources>

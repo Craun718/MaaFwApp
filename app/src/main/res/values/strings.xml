@@ -953,4 +953,8 @@
     <string name="wake_diagnostic_yes">是</string>
     <string name="wake_diagnostic_no">否</string>
     <string name="wake_diagnostic_unknown">未知</string>
+    <string name="precheck_adb_input_restricted">未开启「USB 调试（安全设置）」，系统可能拦截点击。请在开发者选项中开启，或使用 Root 开启。</string>
+    <string name="adb_input_enable_root">用 Root 开启</string>
+    <string name="adb_input_enabled">已开启 USB 调试（安全设置），请重新开始任务</string>
+    <string name="adb_input_enable_failed">开启失败，请在开发者选项中手动开启 USB 调试（安全设置）</string>
 </resources>

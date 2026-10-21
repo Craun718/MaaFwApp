@@ -136,7 +136,12 @@ class PermissionManager(
         }
         // 特权进程一上线就代授，省掉用户逐个点系统页
         scope.launch {
-            serviceConnected.filter { it }.collect { grantViaPrivileged(PrivilegedGrant.ALL) }
+            serviceConnected.filter { it }.collect {
+                grantViaPrivileged(PrivilegedGrant.ALL)
+                if (RootManager.isGranted() && com.aliothmoon.maafw.util.device.XiaomiAdbInput.isRestricted()) {
+                    MiuiAdbInputEnabler.enable()
+                }
+            }
         }
     }
 

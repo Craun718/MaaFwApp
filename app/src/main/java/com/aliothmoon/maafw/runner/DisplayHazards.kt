@@ -7,6 +7,7 @@ import com.aliothmoon.maafw.domain.RunMode
 import com.aliothmoon.maafw.i18n.uiTextFormatted
 import com.aliothmoon.maafw.i18n.uiTextOf
 import com.aliothmoon.maafw.privileged.PrivilegedServicePort
+import com.aliothmoon.maafw.util.device.XiaomiAdbInput
 import com.aliothmoon.maafw.util.EyeProtectionDetector
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -17,6 +18,7 @@ data class DisplayHazards(
     val smartResolution: Boolean = false,
     /** 护眼 / 夜光模式命中的设置项；null = 没开。偏色会影响图像识别 */
     val eyeProtectionSource: String? = null,
+    val adbInputRestricted: Boolean = false,
 )
 
 /** 现读，不缓存：两项用户随时会在系统设置里改 */
@@ -43,7 +45,7 @@ class SystemDisplayHazardProbe(
             Timber.w(e, "isSmartResolutionEnabled failed")
             false
         }
-        DisplayHazards(smartResolution, EyeProtectionDetector.detect(context))
+        DisplayHazards(smartResolution, EyeProtectionDetector.detect(context), XiaomiAdbInput.isRestricted())
     }
 }
 
@@ -57,10 +59,15 @@ class DisplayHazardPrecheck(private val probe: DisplayHazardProbe) : RunPrecheck
     override suspend fun evaluate(ctx: RunContext): Verdict {
         val askSmartResolution = ctx.runMode == RunMode.BACKGROUND && SMART_RESOLUTION !in ctx.acknowledged
         val askEyeProtection = EYE_PROTECTION !in ctx.acknowledged
-        if (!askSmartResolution && !askEyeProtection) return Verdict.Pass
+        val askAdbInput = ADB_INPUT !in ctx.acknowledged
+        if (!askSmartResolution && !askEyeProtection && !askAdbInput) return Verdict.Pass
 
         val hazards = probe.read()
         return when {
+            askAdbInput && hazards.adbInputRestricted -> Verdict.NeedsConfirmation(
+                ADB_INPUT, uiTextOf(R.string.precheck_adb_input_restricted), advisory = true,
+            )
+
             askSmartResolution && hazards.smartResolution -> Verdict.NeedsConfirmation(
                 SMART_RESOLUTION,
                 uiTextOf(R.string.precheck_smart_resolution_enabled),
@@ -80,6 +87,7 @@ class DisplayHazardPrecheck(private val probe: DisplayHazardProbe) : RunPrecheck
     companion object {
         val SMART_RESOLUTION = ConfirmToken("smart-resolution")
         val EYE_PROTECTION = ConfirmToken("eye-protection")
+        val ADB_INPUT = ConfirmToken("adb-input")
     }
 }
 
@@ -104,8 +112,11 @@ class DisplayHazardNoticeHook(
     override suspend fun engage(ctx: RunContext): EngageResult {
         val hazards = probe.read()
         val smartResolution = hazards.smartResolution && ctx.runMode == RunMode.BACKGROUND
-        if (!smartResolution && hazards.eyeProtectionSource == null) return EngageResult.Skipped()
+        if (!smartResolution && hazards.eyeProtectionSource == null && !hazards.adbInputRestricted) return EngageResult.Skipped()
 
+        if (hazards.adbInputRestricted) {
+            journal.warn(ctx.executionId, uiTextOf(R.string.precheck_adb_input_restricted))
+        }
         if (smartResolution) {
             journal.warn(ctx.executionId, uiTextOf(R.string.run_log_smart_resolution_enabled))
         }

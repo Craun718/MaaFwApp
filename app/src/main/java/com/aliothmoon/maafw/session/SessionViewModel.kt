@@ -624,6 +624,13 @@ class SessionViewModel(
 
             is SessionIntent.Start -> start(intent.surface, intent.acknowledged)
             SessionIntent.Stop -> stop()
+            SessionIntent.EnableAdbInput -> {
+                val enabled = com.aliothmoon.maafw.privileged.RootManager.requestPermission() &&
+                    com.aliothmoon.maafw.privileged.MiuiAdbInputEnabler.enable()
+                emitEffect(SessionEffect.ShowMessage(uiTextOf(
+                    if (enabled) R.string.adb_input_enabled else R.string.adb_input_enable_failed,
+                )))
+            }
 
             // 不走 guarded：预览与配置写入无关，运行中反而更需要它
             is SessionIntent.AttachPreviewSurface -> previewPort.attachSurface(intent.surface)
@@ -848,7 +855,10 @@ class SessionViewModel(
                 emitEffect(SessionEffect.ShowMessage(result.reason))
 
             is RunLaunchResult.NeedsConfirmation ->
-                emitEffect(SessionEffect.ConfirmStart(result.prompt, acknowledged + result.token))
+                emitEffect(SessionEffect.ConfirmStart(
+                    result.prompt, acknowledged + result.token,
+                    fixAdbInput = result.token == com.aliothmoon.maafw.runner.DisplayHazardPrecheck.ADB_INPUT,
+                ))
         }
     }
 

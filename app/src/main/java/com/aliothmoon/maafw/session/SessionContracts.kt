@@ -317,6 +317,7 @@ sealed interface SessionIntent {
         val surface: TaskSurface = TaskSurface.InApp,
         val acknowledged: Set<ConfirmToken> = emptySet(),
     ) : SessionIntent
+    data object EnableAdbInput : SessionIntent
     data object Stop : SessionIntent
 
     /**
@@ -372,7 +373,9 @@ sealed interface SessionEffect {
      *
      * [acknowledged] 已含本次这项：几项都要问时逐个弹，前面点过的跟着累积，VM 不必记
      */
-    data class ConfirmStart(val prompt: UiText, val acknowledged: Set<ConfirmToken>) : SessionEffect
+    data class ConfirmStart(
+        val prompt: UiText, val acknowledged: Set<ConfirmToken>, val fixAdbInput: Boolean = false,
+    ) : SessionEffect
 
     /** 拉起外部 Activity 需要 Context，由 Route 层执行 */
     data object InstallShizuku : SessionEffect

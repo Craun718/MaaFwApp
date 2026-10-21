@@ -80,10 +80,28 @@ class DisplayHazardsTest {
             reads++
             both
         }
-        val acked = setOf(DisplayHazardPrecheck.SMART_RESOLUTION, DisplayHazardPrecheck.EYE_PROTECTION)
+        val acked = setOf(DisplayHazardPrecheck.SMART_RESOLUTION, DisplayHazardPrecheck.EYE_PROTECTION, DisplayHazardPrecheck.ADB_INPUT)
 
         assertEquals(Verdict.Pass, check.evaluate(context(acknowledged = acked)))
         assertEquals(0, reads)
+    }
+
+    @Test
+    fun `restricted adb input warns in both modes and acknowledgement skips it`() = runTest {
+        val check = precheck(DisplayHazards(adbInputRestricted = true))
+        for (mode in RunMode.entries) {
+            val verdict = check.evaluate(context(mode)) as Verdict.NeedsConfirmation
+            assertEquals(DisplayHazardPrecheck.ADB_INPUT, verdict.token)
+            assertTrue(verdict.advisory)
+            assertEquals(Verdict.Pass, check.evaluate(context(mode, setOf(verdict.token))))
+        }
+    }
+
+    @Test
+    fun `unattended run logs restricted adb input`() = runTest {
+        val journal = RecordingRunJournal()
+        DisplayHazardNoticeHook({ DisplayHazards(adbInputRestricted = true) }, journal).engage(context())
+        assertTrue(journal.notes.single().second.isResource(R.string.precheck_adb_input_restricted))
     }
 
     // ── 运行日志 ─────────────────────────────────────────────────────

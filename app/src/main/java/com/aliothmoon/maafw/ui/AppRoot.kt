@@ -766,6 +766,13 @@ fun AppRoot(
                 title = stringResource(R.string.precheck_confirm_title),
                 message = confirm.prompt.asString(),
                 icon = Icons.Outlined.WarningAmber,
+                neutralText = if (confirm.fixAdbInput && state.remoteAccess.rootAvailable) {
+                    stringResource(R.string.adb_input_enable_root)
+                } else null,
+                onNeutralClick = {
+                    confirmStartDialog = null
+                    viewModel.onIntent(SessionIntent.EnableAdbInput)
+                },
                 confirmText = stringResource(R.string.precheck_start_anyway),
                 onConfirm = {
                     confirmStartDialog = null
