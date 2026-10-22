@@ -1,6 +1,7 @@
 package com.aliothmoon.maafw.schedule
 
 import com.aliothmoon.maafw.R
+import com.aliothmoon.maafw.domain.Diagnostic
 import com.aliothmoon.maafw.i18n.uiTextFromFramework
 import com.aliothmoon.maafw.i18n.uiTextOf
 import com.aliothmoon.maafw.runner.ConfirmToken
@@ -48,6 +49,28 @@ class ScheduleLaunchOutcomeTest {
 
         assertEquals(TriggerResult.FAILED_START, outcome.result)
         assertEquals(TriggerFailureReason.BLOCKED, outcome.failureReason)
+    }
+
+    @Test
+    fun `invalid plan carries the first error so the log says which option to fix`() {
+        val warning = Diagnostic.warning("global_option", uiTextFromFramework("w"))
+        val first = Diagnostic.error("task:A", uiTextFromFramework("e1"))
+        val second = Diagnostic.error("task:B", uiTextFromFramework("e2"))
+
+        val outcome = RunLaunchResult.Invalid(listOf(warning, first, second)).toScheduleOutcome()
+
+        assertEquals(TriggerFailureReason.INVALID_PLAN, outcome.failureReason)
+        assertEquals(
+            uiTextOf(R.string.schedule_reason_invalid_plan_detail, first.source, first.message),
+            outcome.detail,
+        )
+    }
+
+    @Test
+    fun `invalid plan without errors falls back to the bare reason`() {
+        val warning = Diagnostic.warning("global_option", uiTextFromFramework("w"))
+
+        assertNull(RunLaunchResult.Invalid(listOf(warning)).toScheduleOutcome().detail)
     }
 
     /** id 一旦退化成常量，RunLauncher 受理过一轮后同进程里的定时触发全被当重投吞掉 */

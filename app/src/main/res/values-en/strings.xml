@@ -402,6 +402,7 @@
     <string name="schedule_result_failed_start">Did not start</string>
     <string name="schedule_reason_configuration_missing">The bound run configuration was deleted</string>
     <string name="schedule_reason_invalid_plan">Configuration errors; the run could not be prepared</string>
+    <string name="schedule_reason_invalid_plan_detail">Configuration error (%1$s): %2$s</string>
     <string name="schedule_reason_blocked">A start check did not pass</string>
     <string name="schedule_reason_rejected">A run is already in progress</string>
     <string name="schedule_edit_configuration">Run configuration</string>

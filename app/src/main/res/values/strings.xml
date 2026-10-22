@@ -395,6 +395,7 @@
     <string name="schedule_result_failed_start">未能开始</string>
     <string name="schedule_reason_configuration_missing">绑定的运行配置已被删除</string>
     <string name="schedule_reason_invalid_plan">配置有错，无法生成本次执行</string>
+    <string name="schedule_reason_invalid_plan_detail">配置有错（%1$s）：%2$s</string>
     <string name="schedule_reason_blocked">启动前检查未通过</string>
     <string name="schedule_reason_rejected">已有执行在进行中</string>
     <string name="schedule_edit_configuration">运行配置</string>
