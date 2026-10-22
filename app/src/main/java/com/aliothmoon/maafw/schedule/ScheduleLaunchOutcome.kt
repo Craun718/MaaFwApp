@@ -2,6 +2,7 @@ package com.aliothmoon.maafw.schedule
 
 import com.aliothmoon.maafw.i18n.UiText
 import com.aliothmoon.maafw.runner.RunLaunchResult
+import com.aliothmoon.maafw.runner.RunRequestId
 
 /** 一次定时发起的记账结果 */
 data class ScheduleLaunchOutcome(
@@ -49,6 +50,10 @@ fun RunLaunchResult.toScheduleOutcome(): ScheduleLaunchOutcome = when (this) {
     is RunLaunchResult.NeedsConfirmation ->
         ScheduleLaunchOutcome(TriggerResult.FAILED_START, TriggerFailureReason.BLOCKED, prompt)
 }
+
+/** 策略 + 原定时刻唯一确定一次触发；系统重投同一个 PendingIntent 时算得出同一个 id */
+fun scheduleRequestId(strategyId: String, scheduledTimeMs: Long): RunRequestId =
+    RunRequestId("$strategyId@$scheduledTimeMs")
 
 /** 框架侧的落点枚举翻成落盘的那一份；两边分开，schema 不跟着框架改 */
 fun com.aliothmoon.maafw.runner.HookOutcome.toTriggerStepOutcome(): TriggerStepOutcome = when (this) {

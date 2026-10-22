@@ -6,6 +6,7 @@ import com.aliothmoon.maafw.i18n.uiTextOf
 import com.aliothmoon.maafw.runner.ConfirmToken
 import com.aliothmoon.maafw.runner.RunLaunchResult
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -47,5 +48,15 @@ class ScheduleLaunchOutcomeTest {
 
         assertEquals(TriggerResult.FAILED_START, outcome.result)
         assertEquals(TriggerFailureReason.BLOCKED, outcome.failureReason)
+    }
+
+    /** id 一旦退化成常量，RunLauncher 受理过一轮后同进程里的定时触发全被当重投吞掉 */
+    @Test
+    fun `request id is stable per trigger and distinct across triggers`() {
+        val id = scheduleRequestId("a", 1_000L)
+
+        assertEquals(id, scheduleRequestId("a", 1_000L))
+        assertNotEquals(id, scheduleRequestId("a", 2_000L))
+        assertNotEquals(id, scheduleRequestId("b", 1_000L))
     }
 }
