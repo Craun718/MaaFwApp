@@ -31,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aliothmoon.maafw.R
@@ -45,6 +46,8 @@ import com.aliothmoon.maafw.ui.components.maaClickable
 import com.aliothmoon.maafw.ui.components.ListPlaceholder
 import com.aliothmoon.maafw.ui.components.MaaMarkdown
 import com.aliothmoon.maafw.ui.components.MaaToneBadge
+import com.aliothmoon.maafw.ui.components.ansiAnnotated
+import com.aliothmoon.maafw.ui.components.rememberAnsiColorResolver
 import com.aliothmoon.maafw.ui.components.runLogColor
 import org.koin.androidx.compose.koinViewModel
 
@@ -185,6 +188,14 @@ private fun LineRow(
     expanded: Boolean,
     onToggle: () -> Unit,
 ) {
+    val ansiColor = rememberAnsiColorResolver()
+    val rendered = remember(line.text, line.kind, ansiColor) {
+        if (line.kind == RunLogKind.Agent || line.kind == RunLogKind.AgentError) {
+            ansiAnnotated(line.text, ansiColor)
+        } else {
+            AnnotatedString(line.text)
+        }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -207,7 +218,7 @@ private fun LineRow(
                 )
             } else {
                 Text(
-                    text = line.text,
+                    text = rendered,
                     style = MaterialTheme.typography.labelSmall,
                     // 与运行日志面板同一条规矩：原始转储保持等宽，合成过的按正文排版
                     fontFamily = if (line.kind == RunLogKind.Verbose) FontFamily.Monospace else null,
