@@ -1,6 +1,5 @@
 package com.aliothmoon.maafw.settings
 
-import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aliothmoon.maafw.BuildConfig
@@ -13,6 +12,7 @@ import com.aliothmoon.maafw.project.ProjectRepository
 import com.aliothmoon.maafw.project.ProjectState
 import com.aliothmoon.maafw.update.AndroidAbi
 import com.aliothmoon.maafw.update.OkHttpUpdateDownloader
+import com.aliothmoon.maafw.update.TransferRateMeter
 import com.aliothmoon.maafw.update.UpdateCheckFailure
 import com.aliothmoon.maafw.update.UpdateCheckRequest
 import com.aliothmoon.maafw.update.UpdateCheckResult
@@ -24,6 +24,8 @@ import com.aliothmoon.maafw.update.UpdateSource
 import com.aliothmoon.maafw.update.message
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -33,9 +35,12 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -56,11 +61,15 @@ class SettingsViewModel(
     private val updateDownloader: OkHttpUpdateDownloader,
     private val apkInstaller: SystemApkInstaller,
     private val currentVersion: String = BuildConfig.VERSION_NAME,
-    supportedAbis: List<String> = Build.SUPPORTED_ABIS.orEmpty().toList(),
+    /** 按安装包自己的 ABI 更新，不按设备：装 universal 的不会被换成单 ABI 包 */
+    private val abi: AndroidAbi = AndroidAbi.fromPackageAbi(BuildConfig.MAFW_PACKAGE_ABI),
+    private val clockMillis: () -> Long = { System.nanoTime() / 1_000_000 },
 ) : ViewModel() {
 
-    private val abi = supportedAbis.firstNotNullOfOrNull(::androidAbi) ?: AndroidAbi.ANY
     private val updateOperation = MutableStateFlow(UpdatePanelState())
+
+    private val effectChannel = Channel<SettingsEffect>(Channel.BUFFERED)
+    val effects: Flow<SettingsEffect> = effectChannel.receiveAsFlow()
 
     /** 只在 CAS 抢到 downloading 位后登记，取消不会误伤没抢到位的空跑协程 */
     private var downloadJob: Job? = null
@@ -118,6 +127,8 @@ class SettingsViewModel(
             runDurationLimitEnabled = durationLimitEnabled,
             runDurationLimitMinutes = durationLimitMinutes,
         )
+    }.combine(appSettings.uiScale) { base, uiScale ->
+        base.copy(uiScale = uiScale)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -168,6 +179,10 @@ class SettingsViewModel(
                 appSettings.setRunDurationLimitMinutes(intent.minutes)
             }
 
+            is SettingsIntent.SetUiScale -> viewModelScope.launch {
+                appSettings.setUiScale(intent.scale)
+            }
+
             SettingsIntent.CheckUpdate -> viewModelScope.launch { checkUpdate() }
             SettingsIntent.DownloadUpdate -> viewModelScope.launch { downloadUpdate() }
             SettingsIntent.CancelDownload -> downloadJob?.cancel()
@@ -178,8 +193,8 @@ class SettingsViewModel(
 
     /**
      * 启动自检：等设置读盘与 PI 就绪后查一次；VM 存活期内只跑这一回。
-     * 不写 checkResult（首页不出现结果行）；失败照弹错误窗，发现新版本按自动下载开关走
-     * 静默下载或弹「发现新版本」dialog
+     * 不写 checkResult（首页不出现结果行）；已是最新弹 Toast（与手动检查同一句），失败照弹错误窗，
+     * 发现新版本按自动下载开关走静默下载或弹「发现新版本」dialog
      */
     private suspend fun startupUpdateCheck() {
         appSettings.loaded.first { it }
@@ -200,10 +215,12 @@ class SettingsViewModel(
         )
         val available = result as? UpdateCheckResult.UpdateAvailable
         if (available == null) {
-            Timber.tag("UpdateCheck")
-                .w("startup check found no update: %s", result::class.simpleName)
+            Timber.tag("UpdateCheck").w("startup check found no update: %s", result)
             updateOperation.update {
                 it.copy(checking = false, errorPrompt = result.message()?.let(UpdateErrorPrompt::check))
+            }
+            if (result is UpdateCheckResult.UpToDate) {
+                effectChannel.trySend(SettingsEffect.ShowMessage(uiTextOf(R.string.settings_update_up_to_date)))
             }
             return
         }
@@ -241,6 +258,9 @@ class SettingsViewModel(
                 updatePrompt = result as? UpdateCheckResult.UpdateAvailable,
             )
         }
+        if (result is UpdateCheckResult.UpToDate) {
+            effectChannel.trySend(SettingsEffect.ShowMessage(uiTextOf(R.string.settings_update_up_to_date)))
+        }
     }
 
     /** CAS 占 downloading 位；连点与启动自检/手动并发抢不到位就静默放弃 */
@@ -252,12 +272,25 @@ class SettingsViewModel(
             downloading = true,
             downloadedBytes = -1L,
             totalBytes = -1L,
+            bytesPerSecond = -1L,
             errorMessage = null,
         )
         return if (updateOperation.compareAndSet(current, claimed)) requested else null
     }
 
     private fun updateSettingsLocked(): Boolean = updateOperation.value.downloading
+
+    /** 定时看一眼已下载字节数：网络卡住时下载器不回调，靠这里速度才会掉下来 */
+    private suspend fun sampleDownloadSpeed() {
+        // 头一次进度回来之前没东西可量
+        updateOperation.first { it.downloadedBytes >= 0 }
+        val meter = TransferRateMeter()
+        while (true) {
+            val rate = meter.sample(clockMillis(), updateOperation.value.downloadedBytes)
+            updateOperation.update { it.copy(bytesPerSecond = rate) }
+            delay(SPEED_SAMPLE_INTERVAL_MS)
+        }
+    }
 
     private suspend fun downloadUpdate() {
         // 二次触发（连点、启动自检与手动并发）不上错，CAS 抢不到位就静默快速返回
@@ -308,14 +341,21 @@ class SettingsViewModel(
                 }
             }
 
-            val result = updateDownloader.download(
-                update = update,
-                onProgress = { downloaded, total ->
-                    updateOperation.update {
-                        it.copy(downloadedBytes = downloaded, totalBytes = total)
-                    }
-                },
-            )
+            val result = coroutineScope {
+                val speedSampler = launch { sampleDownloadSpeed() }
+                try {
+                    updateDownloader.download(
+                        update = update,
+                        onProgress = { downloaded, total ->
+                            updateOperation.update {
+                                it.copy(downloadedBytes = downloaded, totalBytes = total)
+                            }
+                        },
+                    )
+                } finally {
+                    speedSampler.cancel()
+                }
+            }
             when (result) {
                 is UpdateDownloadResult.Downloaded -> install(result)
                 is UpdateDownloadResult.Failed -> updateOperation.update {
@@ -353,15 +393,8 @@ class SettingsViewModel(
     private fun projectMetadata(): ProjectMetadata? =
         (projectRepository.state.value as? ProjectState.Ready)?.definition?.metadata
 
-    private fun androidAbi(raw: String): AndroidAbi? = when (raw) {
-        "arm64-v8a", "aarch64" -> AndroidAbi.ARM64
-        "x86_64", "x64" -> AndroidAbi.X86_64
-        "armeabi-v7a", "armeabi" -> AndroidAbi.ARM
-        "x86", "i386" -> AndroidAbi.X86
-        else -> null
-    }
-
     private companion object {
         const val CDK_CHECK_DEBOUNCE_MS = 1_000L
+        const val SPEED_SAMPLE_INTERVAL_MS = 500L
     }
 }

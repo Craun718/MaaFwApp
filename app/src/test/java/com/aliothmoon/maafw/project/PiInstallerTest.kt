@@ -14,13 +14,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.InputStream
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 
 class PiInstallerTest {
 
@@ -84,6 +81,106 @@ class PiInstallerTest {
         assertTrue(File(root, "tasks/b.json").isFile)
         assertFalse("旧版本才有的条目不该残留", File(root, "tasks/a.json").exists())
         assertEquals("12", File(base, PiInstaller.PI_MARKER_NAME).readText())
+    }
+
+    /** agent 以 PI 根为工作目录，它写下的记录不能跟着升级一起没了 */
+    @Test
+    fun `versionCode 变化时保留包外的根级条目`() {
+        val base = temp.newFolder("external")
+        val root = installer(base, MapPiPackage(files), 11).ensureInstalled()
+        File(root, "debug/record").mkdirs()
+        File(root, "debug/record/random_salt.txt").writeText("salt")
+        File(root, "EssenceInventory.json").writeText("[]")
+
+        installer(base, MapPiPackage(files), 12).ensureInstalled()
+
+        assertEquals("salt", File(root, "debug/record/random_salt.txt").readText())
+        assertEquals("[]", File(root, "EssenceInventory.json").readText())
+    }
+
+    @Test
+    fun `归档解包同样保留包外的根级条目并替换包内的`() {
+        val base = temp.newFolder("external")
+        val root = installer(base, ZipPiPackage(files), 11).ensureInstalled()
+        File(root, "debug").mkdirs()
+        File(root, "debug/go-service.log").writeText("log")
+
+        val updated = files - "tasks/a.json" + ("tasks/b.json" to "{}")
+        installer(base, ZipPiPackage(updated), 12).ensureInstalled()
+
+        assertEquals("log", File(root, "debug/go-service.log").readText())
+        assertTrue(File(root, "tasks/b.json").isFile)
+        assertFalse("旧版本才有的条目不该残留", File(root, "tasks/a.json").exists())
+    }
+
+    /** 新包里没有的根级条目不会被 unpack 碰到，得靠上一次记下的清单认出来 */
+    @Test
+    fun `旧包带过而新包不再带的根级条目被清掉`() {
+        val base = temp.newFolder("external")
+        val root = installer(base, MapPiPackage(files + ("resource_old/x.json" to "{}")), 11).ensureInstalled()
+
+        installer(base, MapPiPackage(files), 12).ensureInstalled()
+
+        assertFalse(File(root, "resource_old").exists())
+        assertEquals(
+            setOf("interface.json", "tasks", "resource"),
+            File(base, PiInstaller.PI_ROOTS_NAME).readLines().toSet(),
+        )
+    }
+
+    /** 与 MXU 全量更新同一口径：包带了同名的根级条目就整体替换，里面 agent 写的东西不留 */
+    @Test
+    fun `包内根级条目里 agent 写的文件随升级替换`() {
+        val base = temp.newFolder("external")
+        val withConfig = files + ("config/default.json" to "{}")
+        val root = installer(base, MapPiPackage(withConfig), 11).ensureInstalled()
+        File(root, "config/user.json").writeText("{}")
+
+        installer(base, MapPiPackage(withConfig), 12).ensureInstalled()
+
+        assertTrue(File(root, "config/default.json").isFile)
+        assertFalse(File(root, "config/user.json").exists())
+    }
+
+    /** 清单是外部私有目录里的普通文件；被改坏也不能删到 PI 根外面 */
+    @Test
+    fun `根级条目清单里的越界行不认`() {
+        val base = temp.newFolder("external")
+        installer(base, MapPiPackage(files), 11).ensureInstalled()
+        val outside = File(base, "keep.txt").apply { writeText("keep") }
+        File(base, PiInstaller.PI_ROOTS_NAME).writeText("..\n../keep.txt\n.\n")
+
+        installer(base, MapPiPackage(files), 12).ensureInstalled()
+
+        assertEquals("keep", outside.readText())
+    }
+
+    /** 日志不随升级清空之后靠这条管住体积；口径跟导出一致，再早的本来也导不出去 */
+    @Test
+    fun `升级时清掉过期的 agent 日志而不动记录`() {
+        val base = temp.newFolder("external")
+        val now = 1_800_000_000_000L
+        val stale = now - 8 * DAY_MS
+        fun installerAt(versionCode: Int): PiInstaller {
+            every { AppPaths.ROOT } returns base
+            return PiInstaller(MapPiPackage(files), versionCode, logInclude = listOf("debug/**/*.log"), now = { now })
+        }
+        val root = installerAt(11).ensureInstalled()
+        File(root, "debug/cpp-algo").mkdirs()
+        File(root, "debug/record").mkdirs()
+        fun fileAt(path: String, modified: Long) = File(root, path).apply {
+            writeText(path)
+            setLastModified(modified)
+        }
+        val oldLog = fileAt("debug/cpp-algo/maafw.bak.log", stale)
+        val freshLog = fileAt("debug/go-service.log", now - DAY_MS)
+        val oldRecord = fileAt("debug/record/IMS.json", stale)
+
+        installerAt(12).ensureInstalled()
+
+        assertFalse("超过 7 天的日志该清掉", oldLog.exists())
+        assertTrue("近期日志留着，升级后出问题还能回看", freshLog.exists())
+        assertTrue("记录不是日志，多旧都不碰", oldRecord.exists())
     }
 
     /** 标记是提交点：内容在但标记缺失，说明上次解包没走完 */
@@ -178,6 +275,35 @@ class PiInstallerTest {
 
         assertEquals(afterFirst * 2, pkg.openCount)
         assertEquals("11", File(base, PiInstaller.PI_MARKER_NAME).readText())
+    }
+
+    /** 手动重来是恢复原样的手段：agent 写坏的记录只有这条路能清 */
+    @Test
+    fun `reinstall 在已就绪时连 agent 数据一起清掉`() {
+        val base = temp.newFolder("external")
+        val root = installer(base, MapPiPackage(files), 11).ensureInstalled()
+        File(root, "debug/record").mkdirs()
+        File(root, "debug/record/IMS.json").writeText("{}")
+
+        installer(base, MapPiPackage(files), 11).reinstall()
+
+        assertFalse(File(root, "debug").exists())
+        assertTrue(File(root, "interface.json").isFile)
+    }
+
+    /** 升级解到一半失败后的「重试」是那次升级的延续，不是用户要清数据 */
+    @Test
+    fun `reinstall 在上次没走完时保留 agent 数据`() {
+        val base = temp.newFolder("external")
+        val root = installer(base, MapPiPackage(files), 11).ensureInstalled()
+        File(root, "debug/record").mkdirs()
+        File(root, "debug/record/IMS.json").writeText("{}")
+        File(base, PiInstaller.PI_MARKER_NAME).delete()
+
+        installer(base, MapPiPackage(files), 12).reinstall()
+
+        assertEquals("{}", File(root, "debug/record/IMS.json").readText())
+        assertEquals("12", File(base, PiInstaller.PI_MARKER_NAME).readText())
     }
 
     /** 读取路径拿的是这个；它不该顺带解包，未解包就得响 */
@@ -277,30 +403,53 @@ class PiInstallerTest {
         val root = installer(base, ZipPiPackage(files), 11).ensureInstalled()
         assertEquals("ok", File(root, "resource/foo..bar.json").readText())
     }
-}
 
-private class ZipPiPackage(
-    files: Map<String, String>,
-    manifest: List<String> = files.keys.sorted(),
-) : PiPackage {
-    private val bytes: ByteArray = zipBytes(files)
-    private val names = manifest
+    private val bulkyFiles = mapOf(
+        "resource/bulky.txt" to bulkyText(),
+        "interface.json" to "{}",
+    )
 
-    override fun manifest(): List<String> = names
+    /** 下载残缺的 APK 在签名校验被关掉的机器上装得上，读到的归档与出包时记的 CRC 对不上 */
+    @Test
+    fun `归档 inflate 出错且 CRC 对不上时判为包损坏`() {
+        val base = temp.newFolder("external")
+        val (intact, damaged) = zeroFilledArchive(bulkyFiles)
+        val pkg = ZipPiPackage(damaged, archiveCrc = crc32Of(intact))
 
-    override fun open(path: String): InputStream = error(path)
-
-    override fun openArchive(): InputStream = bytes.inputStream()
-}
-
-private fun zipBytes(files: Map<String, String>): ByteArray =
-    ByteArrayOutputStream().use { raw ->
-        ZipOutputStream(raw).use { zip ->
-            files.forEach { (name, content) ->
-                zip.putNextEntry(ZipEntry(name))
-                zip.write(content.toByteArray())
-                zip.closeEntry()
-            }
+        val error = assertThrows(PiArchiveException::class.java) {
+            installer(base, pkg, 11).ensureInstalled()
         }
-        raw.toByteArray()
+
+        assertTrue(error.corrupt)
+        assertTrue(error.message!!, "resource/bulky.txt" in error.message!!)
+        assertFalse(File(base, PiInstaller.PI_MARKER_NAME).exists())
     }
+
+    /** 读到的与记的一致，说明包没坏，是这一遍没读对，重试还有指望 */
+    @Test
+    fun `归档 inflate 出错但 CRC 对得上时不判包损坏`() {
+        val base = temp.newFolder("external")
+        val (_, damaged) = zeroFilledArchive(bulkyFiles)
+        val pkg = ZipPiPackage(damaged, archiveCrc = crc32Of(damaged))
+
+        val error = assertThrows(PiArchiveException::class.java) {
+            installer(base, pkg, 11).ensureInstalled()
+        }
+
+        assertFalse(error.corrupt)
+    }
+
+    @Test
+    fun `拿不到 CRC 参照时不判包损坏`() {
+        val base = temp.newFolder("external")
+        val (_, damaged) = zeroFilledArchive(bulkyFiles)
+
+        val error = assertThrows(PiArchiveException::class.java) {
+            installer(base, ZipPiPackage(damaged), 11).ensureInstalled()
+        }
+
+        assertFalse(error.corrupt)
+    }
+}
+
+private const val DAY_MS = 24L * 60 * 60 * 1000

@@ -11,13 +11,23 @@ oneway interface IMaaRunnerCallback {
 
     void onTaskStarted(String taskName, int index, int total) = 2;
 
-    void onTaskFinished(String taskName, boolean success, String message) = 3;
+    /**
+     * cancelled：没成功是因为外壳叫停了这一轮，不是任务自己失败
+     * 放在末尾：新旧两端对不上时缺的那个读成 false，照旧按失败收
+     */
+    void onTaskFinished(String taskName, boolean success, String message, boolean cancelled) = 3;
 
-    /** outcome 取 RunOutcome 的取值；reason 仅在整轮失败时非空 */
+    /** outcome 取 RunOutcome 的取值；reason 仅在整轮失败时非空，AGENT_LAUNCH_FAILED 时是失败 agent 的序号 */
     void onFinished(int outcome, String reason) = 4;
 
     void onAgentOutput(String line, boolean fromStderr) = 5;
 
     /** 一个 agent child 已 connect（含本轮复用已在线的）；[exec] 是真正拉起的可执行体，不是 PI 的 child_exec */
     void onAgentConnected(int index, int total, String exec) = 6;
+
+    /**
+     * 一个 agent child 没被要求退出却退了；exitCode 被信号杀死时为 128 + 信号号，
+     * crashReport 是 log/crash/ 下的现场文件名，没捞到为 null
+     */
+    void onAgentExited(int index, String exec, int exitCode, String crashReport) = 7;
 }

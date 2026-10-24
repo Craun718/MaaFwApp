@@ -4,6 +4,7 @@ import com.aliothmoon.maafw.domain.AgentDefinition
 import com.aliothmoon.maafw.domain.ControllerDefinition
 import com.aliothmoon.maafw.domain.ResourceDefinition
 import com.aliothmoon.maafw.domain.RunConfigurationId
+import com.aliothmoon.maafw.i18n.UiText
 import kotlinx.serialization.json.JsonObject
 
 /** Start 时冻结的执行输入；Runner 不再观察用户配置 */
@@ -18,7 +19,11 @@ data class RunPlan(
     val agents: List<AgentDefinition> = emptyList(),
     /** 注入 agent 子进程的 `PI_*`，见 [PiAgentEnv]；无 agent 的 PI 用不上 */
     val piEnv: Map<String, String> = emptyMap(),
+    /** 勾着但这一轮跑不了、被跳过的任务，只进运行日志 */
+    val skippedTasks: List<SkippedTask> = emptyList(),
 )
+
+data class SkippedTask(val label: String, val reason: UiText)
 
 data class RuntimeTask(
     val taskName: String,
@@ -27,7 +32,12 @@ data class RuntimeTask(
     val pipelineOverrides: List<JsonObject>,
     /** 加载期已物化的展示名；缺省回落 [taskName] */
     val label: String = taskName,
+    /** 任务级选项的遥测摘要（[com.aliothmoon.maafw.telemetry.TelemetrySummary]），只进 Span，不下发特权进程 */
+    val telemetryOptions: Map<String, String> = emptyMap(),
 )
+
+/** 交给 MaaResourcePostBundle 的顺序：先 `resource.path[]`，再当前 controller 的 `attach_resource_path` */
+fun RunPlan.resourceBundlePaths(): List<String> = resource.paths + controller.attachResourcePaths
 
 fun RunPlan.taskLabelMap(): Map<String, String> =
     tasks.associate { it.taskName to it.label.ifBlank { it.taskName } }

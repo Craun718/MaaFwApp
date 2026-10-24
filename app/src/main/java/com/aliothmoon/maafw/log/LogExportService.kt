@@ -3,18 +3,19 @@ package com.aliothmoon.maafw.log
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.provider.OpenableColumns
 import androidx.core.content.FileProvider
 import com.aliothmoon.maafw.MaaDispatchers
+import com.aliothmoon.maafw.util.displayName
 import kotlinx.coroutines.CancellationException
-import com.aliothmoon.maafw.domain.SECRET_MASK
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.FilterOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -34,28 +35,29 @@ class LogExportService(
     /** 要收的几棵目录；zip 里的路径相对 [baseDir] */
     private val baseDir: () -> File,
     private val roots: () -> List<File>,
+    /** agent 自己写在 PI 根下的日志 */
+    private val piLogs: () -> LogExportCollector.PiLogs? = { null },
     /** 调试模式下额外附一份 `getprop`：ROM 差异是排障时最先要问的 */
     private val debugMode: () -> Boolean,
     /** 设备快照文本；采集在 [DeviceInfoCollector] */
     private val deviceInfo: () -> String,
-    /** 脱敏后的设置快照文本；采集在 [ExportSnapshots] */
+    /** 设置快照文本；调试模式下保留明文，采集在 [ExportSnapshots] */
     private val settingsSnapshot: suspend () -> String,
-    /** 脱敏后的 PI 运行配置快照文本；采集在 [ExportSnapshots] */
+    /** PI 运行配置快照文本；调试模式下保留明文，采集在 [ExportSnapshots] */
     private val piConfigSnapshot: suspend () -> String,
-    /**
-     * 当前保存着的 PI password 明文，打包时在文本日志里换成掩码。
-     * MaaFramework 的 `MaaTaskerPostTask` 会把替换后的整份 pipeline_override 写进框架日志 `log/maafw.log`，外壳拦不住，只能在导出这一步补
-     */
+    /** 当前保存着的 PI password 明文，打包时在文本日志里换成掩码，见 [SecretRedaction] */
     private val secrets: suspend () -> Collection<String> = { emptyList() },
+    /** 压缩后的包体积预算 */
+    private val maxZipBytes: Long = MAX_ZIP_BYTES,
 ) {
 
     /** 返回 null = 打包失败；没有日志时也保留设备信息快照 */
     suspend fun exportZip(): File? = withContext(MaaDispatchers.IO) {
-        val files = LogExportCollector.collect(roots(), System.currentTimeMillis())
+        val files = LogExportCollector.collect(roots(), System.currentTimeMillis(), piLogs())
         if (files.isEmpty()) {
             Timber.w("no log files to export, packing device info only")
         }
-        val secrets = if (debugMode()) emptyList() else redactable(secrets())
+        val secrets = if (debugMode()) emptyList() else SecretRedaction.redactable(secrets())
         try {
             val settingsSnapshot = settingsSnapshot()
             val piConfigSnapshot = piConfigSnapshot()
@@ -83,7 +85,7 @@ class LogExportService(
             context.contentResolver.openOutputStream(target)?.use { out ->
                 zip.inputStream().use { it.copyTo(out) }
             } ?: return@runCatching null
-            displayName(target) ?: zip.name
+            context.contentResolver.displayName(target) ?: zip.name
         }.onFailure { Timber.w(it, "write to export target failed: %s", target) }.getOrNull()
     }
 
@@ -97,14 +99,34 @@ class LogExportService(
         piConfigSnapshot: String,
     ) {
         val base = baseDir()
-        ZipOutputStream(BufferedOutputStream(FileOutputStream(zip))).use { out ->
+        val plan = LogExportCollector.plan(files)
+        // 量的是压缩后的字节
+        val counter = CountingOutputStream(BufferedOutputStream(FileOutputStream(zip)))
+        ZipOutputStream(counter).use { out ->
             if (debugMode()) appendDeviceProperties(out)
             appendDeviceInfo(out)
             appendSnapshot(out, SETTINGS_SNAPSHOT_ENTRY, settingsSnapshot)
             appendSnapshot(out, PI_CONFIG_SNAPSHOT_ENTRY, piConfigSnapshot)
             val skipped = mutableListOf<String>()
-            files.forEach { file ->
-                appendLogFile(out, file, base, secrets, skipped)
+            val ratio = CompressionRatio()
+            fun append(file: File) {
+                // 正写着的 maafw.log 拷完会变长，原始大小取拷之前的
+                val length = file.length()
+                val before = counter.count
+                if (appendLogFile(out, file, base, secrets, skipped) && isText(file)) {
+                    ratio.record(length, counter.count - before)
+                }
+            }
+            plan.required.forEach(::append)
+            // 写进去就退不出来，只能先估：文本按已写的压缩比，截图压不动按原大小
+            val dropped = mutableListOf<File>()
+            for (file in plan.optional) {
+                val estimate = if (isText(file)) ratio.estimate(file.length()) else file.length()
+                if (counter.count + estimate > maxZipBytes) dropped += file else append(file)
+            }
+            if (dropped.isNotEmpty()) {
+                Timber.i("export size budget reached, dropped %d older files", dropped.size)
+                dropped.forEach { skipped += "${it.relativeTo(base).invariantSeparatorsPath}: $OVER_BUDGET" }
             }
             if (skipped.isNotEmpty()) {
                 out.putNextEntry(ZipEntry(SKIPPED_ENTRY))
@@ -114,38 +136,42 @@ class LogExportService(
         }
     }
 
-    /** 提权进程写的文件可能对 App 不可读，逐个跳过，不拖垮整包 */
+    /** 提权进程写的文件可能对 App 不可读，逐个跳过，不拖垮整包；返回是否写进去了 */
     private fun appendLogFile(
         out: ZipOutputStream,
         file: File,
         base: File,
         secrets: List<String>,
         skipped: MutableList<String>,
-    ) {
+    ): Boolean {
         val name = file.relativeTo(base).invariantSeparatorsPath
-        try {
+        return try {
             file.inputStream().use { input ->
                 val entry = ZipEntry(name).apply { time = file.lastModified() }
                 out.putNextEntry(entry)
-                if (secrets.isNotEmpty() && file.extension.lowercase() in TEXT_EXTENSIONS) {
+                if (secrets.isNotEmpty() && isText(file)) {
                     copyRedacted(input, out, secrets)
                 } else {
                     input.copyTo(out, BUFFER_SIZE)
                 }
                 out.closeEntry()
             }
+            true
         } catch (e: IOException) {
             Timber.w(e, "Skip unreadable log file: %s", name)
             skipped += "$name: ${e.message ?: e::class.java.simpleName}"
             runCatching { out.closeEntry() }
+            false
         }
     }
+
+    private fun isText(file: File): Boolean = file.extension.lowercase() in TEXT_EXTENSIONS
 
     /** 逐行替换，大文件不整份读进内存，换行统一成 LF；writer 只 flush 不 close，close 会把整个 zip 流关掉 */
     private fun copyRedacted(input: InputStream, out: ZipOutputStream, secrets: List<String>) {
         val writer = out.bufferedWriter(Charsets.UTF_8)
         input.bufferedReader(Charsets.UTF_8).forEachLine { line ->
-            writer.write(secrets.fold(line) { text, secret -> text.replace(secret, SECRET_MASK) })
+            writer.write(SecretRedaction.redact(line, secrets))
             writer.write("\n")
         }
         writer.flush()
@@ -191,15 +217,48 @@ class LogExportService(
         }
     }
 
-    private fun displayName(uri: Uri): String? = runCatching {
-        context.contentResolver
-            .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
-            ?.use { cursor ->
-                if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0) else null
-            }
-    }.getOrNull()
+    private class CountingOutputStream(out: OutputStream) : FilterOutputStream(out) {
+        var count = 0L
+            private set
+
+        override fun write(b: Int) {
+            out.write(b)
+            count++
+        }
+
+        override fun write(b: ByteArray, off: Int, len: Int) {
+            out.write(b, off, len)
+            count += len
+        }
+    }
+
+    /** 小文件的条目头会把比例带偏，只记大的 */
+    private class CompressionRatio {
+        private var raw = 0L
+        private var packed = 0L
+
+        fun record(rawBytes: Long, packedBytes: Long) {
+            if (rawBytes < MIN_RATIO_SAMPLE_BYTES) return
+            raw += rawBytes
+            packed += packedBytes
+        }
+
+        fun estimate(rawBytes: Long): Long {
+            val ratio = if (raw > 0) packed.toDouble() / raw else DEFAULT_TEXT_RATIO
+            return (rawBytes * ratio * RATIO_MARGIN).toLong()
+        }
+    }
 
     private companion object {
+        /** GitHub issue 附件上限 25MB，留一点给 zip 的中央目录 */
+        const val MAX_ZIP_BYTES = 24L * 1024 * 1024
+        const val OVER_BUDGET = "over export size budget"
+        const val MIN_RATIO_SAMPLE_BYTES = 64L * 1024
+
+        /** 还没写过大文本日志时的保守估计；maafw.log 实测压到 5% 上下 */
+        const val DEFAULT_TEXT_RATIO = 0.2
+        const val RATIO_MARGIN = 1.25
+
         const val LOG_DIR_NAME = "log"
         const val PROPERTIES_ENTRY = "properties.txt"
         const val DEVICE_INFO_ENTRY = "device_info.txt"
@@ -208,14 +267,7 @@ class LogExportService(
         const val SKIPPED_ENTRY = "export_skipped.txt"
         const val MIME_ZIP = "application/zip"
         const val BUFFER_SIZE = 8 * 1024
-
-        /** 一两个字符的串在日志里到处都是，替换掉会把整份日志毁了；更短的密码不打码 */
-        const val MIN_REDACT_LENGTH = 4
         val TEXT_EXTENSIONS = setOf("log", "txt", "json", "jsonl")
-
-        /** 长的先换：一个密码是另一个的子串时，先换短的会留下长的那截尾巴 */
-        fun redactable(secrets: Collection<String>): List<String> =
-            secrets.filter { it.length >= MIN_REDACT_LENGTH }.distinct().sortedByDescending { it.length }
 
         val STAMP = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
     }

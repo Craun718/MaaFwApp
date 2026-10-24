@@ -61,6 +61,26 @@ class NotificationCenter(
     }
 
     /**
+     * 有启用的定时而 Shizuku 没在跑：到点必定跑不起来，提前说
+     *
+     * 只发系统通知不外推：这是让人去手机上点一下的事，推到别处也没法处理。
+     * 不设超时，Shizuku 回来时由 `ShizukuDownMonitor` 撤
+     */
+    fun notifyShizukuDown(afterBoot: Boolean) {
+        eventNotifier.notifyShizukuDown(
+            title = renderText(uiTextOf(R.string.notification_shizuku_down_title)),
+            text = renderText(
+                uiTextOf(
+                    if (afterBoot) R.string.notification_shizuku_down_after_boot
+                    else R.string.notification_shizuku_down_stopped,
+                ),
+            ),
+        )
+    }
+
+    fun withdrawShizukuDown() = eventNotifier.cancelShizukuDown()
+
+    /**
      * 特权进程死掉这一档单独判，不与普通失败混在一起
      *
      * `MaaFrameworkRunnerPort` 自己就在监听 `Died` 并中止本轮，所以这里不必再挂一个观察者——
@@ -123,10 +143,12 @@ class NotificationCenter(
      *
      * 取的是 [RunLogRecorder] 的内存快照而不是会话文件：收尾这一刻文件还没冲完，
      * 读它会缺最后几行——而挂掉前的最后几行恰恰是排障时最想看的
+     *
+     * 只取进度档：收尾那一刻「全部」档的末尾多半是成串的 `Node.*` 原始回调，放进通知没法读
      */
     private fun appendLogs(body: String, current: NotificationSettings): String {
         if (!current.includeLogDetails.toPrefBoolean()) return body
-        val logs = recorder.runLog.value
+        val logs = recorder.runLog.value.progress
             .takeLast(LOG_TAIL_LINES)
             .joinToString("\n") { "[${TIME_OF_DAY.format(Date(it.atMillis))}] ${renderText(it.text)}" }
         return if (logs.isEmpty()) body else "$body\n\n$logs"

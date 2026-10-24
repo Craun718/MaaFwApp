@@ -1,12 +1,15 @@
 package com.aliothmoon.maafw.settings
 
+import com.aliothmoon.maafw.R
 import com.aliothmoon.maafw.domain.ControllerDefinition
 import com.aliothmoon.maafw.domain.ProjectDefinition
 import com.aliothmoon.maafw.domain.ProjectMetadata
 import com.aliothmoon.maafw.privileged.FakePermissionGateway
 import com.aliothmoon.maafw.project.FakeProjectRepository
 import com.aliothmoon.maafw.project.ProjectState
+import com.aliothmoon.maafw.i18n.isResource
 import com.aliothmoon.maafw.SystemApkInstaller
+import com.aliothmoon.maafw.update.AndroidAbi
 import com.aliothmoon.maafw.update.DownloadedUpdate
 import com.aliothmoon.maafw.update.OkHttpUpdateDownloader
 import com.aliothmoon.maafw.update.ResolvedUpdate
@@ -26,9 +29,12 @@ import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -198,6 +204,38 @@ class SettingsViewModelTest {
         gate.complete(Unit)
     }
 
+    /** 已是最新只弹 Toast，不在首页留结果行 */
+    @Test
+    fun `manual check that is up to date emits a message`() = runTest {
+        val viewModel = viewModel(
+            service = mockk {
+                coEvery { check(any()) } returns UpdateCheckResult.UpToDate(UpdateSource.MIRRORCHYAN, "1.0.0")
+            },
+        )
+        val effects = mutableListOf<SettingsEffect>()
+        backgroundScope.launch { viewModel.effects.collect { effects += it } }
+
+        viewModel.onIntent(SettingsIntent.CheckUpdate)
+        advanceUntilIdle()
+
+        val message = (effects.single() as SettingsEffect.ShowMessage).message
+        assertTrue(message.isResource(R.string.settings_update_up_to_date))
+        assertNull(latestPanel(viewModel).errorPrompt)
+    }
+
+    @Test
+    fun `page scale is stored and reflected in ui state`() = runTest {
+        val settings = FakeAppSettingsGateway()
+        val viewModel = viewModel(settings = settings)
+        backgroundScope.launch { viewModel.uiState.collect {} }
+
+        viewModel.onIntent(SettingsIntent.SetUiScale(105))
+        advanceUntilIdle()
+
+        assertEquals(105, settings.uiScale.value)
+        assertEquals(105, viewModel.uiState.value.uiScale)
+    }
+
     @Test
     fun `startup check pops prompt when update available and auto download off`() = runTest {
         var checks = 0
@@ -236,7 +274,7 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun `startup check stays silent on up to date`() = runTest {
+    fun `startup check that is up to date only toasts`() = runTest {
         val viewModel = viewModel(
             service = mockk {
                 coEvery { check(any()) } returns
@@ -244,8 +282,12 @@ class SettingsViewModelTest {
             },
             settings = FakeAppSettingsGateway().also { it.setAutoCheckUpdate(true) },
         )
+        val effects = mutableListOf<SettingsEffect>()
+        backgroundScope.launch { viewModel.effects.collect { effects += it } }
         advanceUntilIdle()
 
+        val message = (effects.single() as SettingsEffect.ShowMessage).message
+        assertTrue(message.isResource(R.string.settings_update_up_to_date))
         val panel = latestPanel(viewModel)
         assertNull(panel.updatePrompt)
         assertNull(panel.errorPrompt)
@@ -411,6 +453,38 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `download speed is sampled while downloading and drops when it stalls`() = runTest {
+        val viewModel = viewModel(
+            downloader = mockk {
+                coEvery { download(any(), any()) } coAnswers {
+                    val onProgress = secondArg<(Long, Long) -> Unit>()
+                    for (step in 0..8) {
+                        onProgress(step * 256L * 1024, 64L * 1024 * 1024)
+                        delay(250)
+                    }
+                    awaitCancellation()
+                }
+            },
+            settings = FakeAppSettingsGateway().also { it.updateSource.value = UpdateSource.GITHUB },
+            clockMillis = { testScheduler.currentTime },
+        )
+        viewModel.onIntent(SettingsIntent.CheckUpdate)
+        advanceUntilIdle()
+        viewModel.onIntent(SettingsIntent.DownloadUpdate)
+
+        // 采样一直在跑，不能 advanceUntilIdle
+        advanceTimeBy(2_100)
+        assertTrue(latestPanel(viewModel).bytesPerSecond > 0)
+
+        advanceTimeBy(4_000)
+        assertEquals(0L, latestPanel(viewModel).bytesPerSecond)
+
+        viewModel.onIntent(SettingsIntent.CancelDownload)
+        advanceUntilIdle()
+        assertFalse(latestPanel(viewModel).downloading)
+    }
+
+    @Test
     fun `update settings are locked while downloading`() = runTest {
         val settings = FakeAppSettingsGateway().also { it.updateSource.value = UpdateSource.GITHUB }
         val viewModel = viewModel(
@@ -481,11 +555,12 @@ class SettingsViewModelTest {
             )
         },
         settings: AppSettingsGateway = FakeAppSettingsGateway(),
+        clockMillis: () -> Long = { 0L },
     ): SettingsViewModel {
         val definition = ProjectDefinition(
             name = "demo",
             version = "1",
-            controller = ControllerDefinition(),
+            controllers = listOf(ControllerDefinition()),
             resources = emptyList(),
             tasks = emptyList(),
             groups = emptyList(),
@@ -506,7 +581,8 @@ class SettingsViewModelTest {
                 coEvery { install(any()) } returns SystemApkInstaller.Result.Started
             },
             currentVersion = "1.0.0",
-            supportedAbis = listOf("arm64-v8a"),
+            abi = AndroidAbi.ARM64,
+            clockMillis = clockMillis,
         )
     }
 }

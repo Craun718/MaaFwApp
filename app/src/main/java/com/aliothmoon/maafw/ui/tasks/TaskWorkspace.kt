@@ -22,7 +22,7 @@ import androidx.compose.ui.res.stringResource
 import com.aliothmoon.maafw.R
 import com.aliothmoon.maafw.domain.ResolvedRunConfiguration
 import com.aliothmoon.maafw.project.ProjectState
-import com.aliothmoon.maafw.runner.RunLogEntry
+import com.aliothmoon.maafw.runner.RunLogSnapshot
 import com.aliothmoon.maafw.session.SessionIntent
 import com.aliothmoon.maafw.session.SessionUiState
 import com.aliothmoon.maafw.theme.MaaDesignTokens
@@ -37,10 +37,12 @@ import com.aliothmoon.maafw.ui.components.MaaEmptyState
 @Composable
 internal fun TaskWorkspace(
     state: SessionUiState,
-    runLog: () -> List<RunLogEntry>,
+    runLog: () -> RunLogSnapshot,
     onExportLogs: () -> Unit,
     onIntent: (SessionIntent) -> Unit,
     showLogToggle: Boolean,
+    /** 主 pager 会预组合相邻页：停在别的页、或二级页盖在上面时，收日志不该抢走返回键 */
+    backEnabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val locked = state.configurationLocked
@@ -110,9 +112,7 @@ internal fun TaskWorkspace(
         }
     }
 
-    if (logOpen) {
-        BackHandler { showRunLog = false }
-    }
+    BackHandler(enabled = logOpen && backEnabled) { showRunLog = false }
 
     if (showAddTasks && active != null) {
         AddTasksSheet(
@@ -168,7 +168,7 @@ private fun TaskWorkspaceBody(
     logOpen: Boolean,
     active: ResolvedRunConfiguration?,
     locked: Boolean,
-    runLog: () -> List<RunLogEntry>,
+    runLog: () -> RunLogSnapshot,
     onExportLogs: () -> Unit,
     onIntent: (SessionIntent) -> Unit,
     onRequestAddTasks: () -> Unit,

@@ -29,7 +29,6 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -58,8 +57,11 @@ import com.aliothmoon.maafw.R
 import com.aliothmoon.maafw.domain.ConfigurationTemplate
 import com.aliothmoon.maafw.domain.ResolvedRunConfiguration
 import com.aliothmoon.maafw.domain.RunConfigurationId
+import com.aliothmoon.maafw.domain.TaskCatalogGroup
 import com.aliothmoon.maafw.domain.TemplateTask
+import com.aliothmoon.maafw.domain.UnavailableReasons
 import com.aliothmoon.maafw.session.SessionUiState
+import com.aliothmoon.maafw.i18n.UiText
 import com.aliothmoon.maafw.i18n.asString
 import com.aliothmoon.maafw.i18n.uiTextPlural
 import com.aliothmoon.maafw.theme.MaaDesignTokens
@@ -75,8 +77,10 @@ import com.aliothmoon.maafw.ui.components.MaaSelectableCard
 import com.aliothmoon.maafw.ui.components.MaaSelectionMarker
 import com.aliothmoon.maafw.ui.components.MaaSheetHeader
 import com.aliothmoon.maafw.ui.components.MaaSingleChoiceFlow
+import com.aliothmoon.maafw.ui.components.MaaSkipReason
 import com.aliothmoon.maafw.ui.components.MaaToneBadge
 import com.aliothmoon.maafw.ui.components.maaClickable
+import com.aliothmoon.maafw.ui.components.MaaIconButton
 
 private sealed interface ConfigSheetPage {
     /** 导航深度；AnimatedContent 用 depth 差决定滑入方向 */
@@ -181,6 +185,7 @@ internal fun ConfigurationSheet(
                     } else {
                         TemplatePreviewPage(
                             template = template,
+                            catalog = state.taskCatalog,
                             existingNames = existingNames,
                             writeEnabled = !locked,
                             onBack = { page = ConfigSheetPage.Home },
@@ -286,6 +291,7 @@ private fun ConfigSheetHomePage(
 @Composable
 private fun TemplatePreviewPage(
     template: ConfigurationTemplate,
+    catalog: List<TaskCatalogGroup>,
     existingNames: List<String>,
     writeEnabled: Boolean,
     onBack: () -> Unit,
@@ -293,6 +299,7 @@ private fun TemplatePreviewPage(
     onCreate: (name: String, taskNames: List<String>) -> Unit,
 ) {
     val templateTasks = remember(template) { template.distinctTasks }
+    val catalogItems = remember(catalog) { catalog.flatMap { it.tasks }.associateBy { it.taskName } }
     var name by rememberSaveable(template.name) {
         mutableStateOf(uniqueConfigurationName(template.label, existingNames))
     }
@@ -337,8 +344,11 @@ private fun TemplatePreviewPage(
             contentPadding = PaddingValues(bottom = MaaDesignTokens.Spacing.xs),
         ) {
             items(templateTasks, key = { it.taskName }) { task ->
+                val item = catalogItems[task.taskName]
                 TemplateTaskRow(
                     task = task,
+                    // 目录覆盖全部任务，查不到就是 preset 引用了已不存在的任务
+                    unavailableReason = if (item == null) UnavailableReasons.missingDefinition() else item.unavailableReason,
                     checked = task.taskName in included,
                     writeEnabled = writeEnabled,
                     onToggle = { checked -> included.setPresent(task.taskName, checked) },
@@ -363,6 +373,7 @@ private fun TemplatePreviewPage(
 @Composable
 private fun TemplateTaskRow(
     task: TemplateTask,
+    unavailableReason: UiText?,
     checked: Boolean,
     writeEnabled: Boolean,
     onToggle: (Boolean) -> Unit,
@@ -372,6 +383,12 @@ private fun TemplateTaskRow(
         checked = checked,
         enabled = writeEnabled,
         onToggle = onToggle,
+        labelColor = if (unavailableReason == null) {
+            MaterialTheme.colorScheme.onSurface
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        belowLabel = unavailableReason?.let { reason -> { MaaSkipReason(reason.asString()) } },
         trailing = if (!task.enabled) {
             {
                 MaaToneBadge(
@@ -486,7 +503,7 @@ private fun CreateEmptyCard(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .maaClickable(enabled = writeEnabled, onClick = onClick)
+            .maaClickable(enabled = writeEnabled, shape = MaterialTheme.shapes.medium, onClick = onClick)
             .alpha(if (writeEnabled) 1f else MaaDesignTokens.Alpha.disabled),
         shape = MaterialTheme.shapes.medium,
         color = Color.Transparent,
@@ -562,7 +579,7 @@ private fun ConfigRowCard(
                     color = contentColor.copy(alpha = MaaDesignTokens.Alpha.secondary),
                 )
             }
-            IconButton(onClick = onDuplicate, enabled = writeEnabled) {
+            MaaIconButton(onClick = onDuplicate, enabled = writeEnabled) {
                 Icon(
                     imageVector = Icons.Outlined.ContentCopy,
                     contentDescription = stringResource(R.string.common_copy),
@@ -570,7 +587,7 @@ private fun ConfigRowCard(
                     modifier = Modifier.size(MaaDesignTokens.IconSize.md),
                 )
             }
-            IconButton(onClick = onRename, enabled = writeEnabled) {
+            MaaIconButton(onClick = onRename, enabled = writeEnabled) {
                 Icon(
                     imageVector = Icons.Outlined.Edit,
                     contentDescription = stringResource(R.string.common_rename),
@@ -578,7 +595,7 @@ private fun ConfigRowCard(
                     modifier = Modifier.size(MaaDesignTokens.IconSize.md),
                 )
             }
-            IconButton(onClick = onDelete, enabled = writeEnabled) {
+            MaaIconButton(onClick = onDelete, enabled = writeEnabled) {
                 Icon(
                     imageVector = Icons.Outlined.DeleteOutline,
                     contentDescription = stringResource(R.string.common_delete),
@@ -598,7 +615,7 @@ private fun TemplateCard(
 ) {
     MaaCard(
         modifier = Modifier
-            .maaClickable(enabled = writeEnabled, onClick = onClick)
+            .maaClickable(enabled = writeEnabled, shape = MaterialTheme.shapes.medium, onClick = onClick)
             .alpha(if (writeEnabled) 1f else MaaDesignTokens.Alpha.disabled),
         contentPadding = PaddingValues(MaaDesignTokens.Spacing.md),
     ) {

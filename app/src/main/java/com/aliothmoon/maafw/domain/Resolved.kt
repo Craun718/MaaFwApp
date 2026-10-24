@@ -15,14 +15,24 @@ data class ResolvedProjectSession(
     val settingSections: List<OptionSectionState> = emptyList(),
     /** 当前选中 resource 的 `option[]`；换资源换这份，值按 resource name 分桶 */
     val resourceOptions: List<OptionEditorState> = emptyList(),
+    /** 当前选中 controller 的 `option[]`；同上，按 controller name 分桶 */
+    val controllerOptions: List<OptionEditorState> = emptyList(),
     val environment: ResolvedEnvironment,
     val diagnostics: List<Diagnostic>,
 )
 
 data class ResolvedEnvironment(
-    val controllerName: String,
+    val controller: ResolvedController,
     val resource: ResolvedResource?,
     val resourceCandidates: List<ResolvedResource>,
+    /** PI 里全部 Adb controller；只有一个时 UI 不出选择 */
+    val controllerCandidates: List<ResolvedController> = listOf(controller),
+)
+
+/** 匹配用内部名；UI 展示 label */
+data class ResolvedController(
+    val name: String,
+    val label: String,
 )
 
 /** 匹配用内部名；UI 展示 label */
@@ -46,8 +56,12 @@ data class ResolvedRunConfiguration(
 object UnavailableReasons {
     fun missingDefinition(): UiText = uiTextOf(R.string.task_unavailable_missing)
 
-    fun controllerMismatch(required: List<String>): UiText =
-        uiTextOf(R.string.task_unavailable_controller, required.joinToString())
+    /** 没有一个 Adb controller 能跑：Android 上永远跑不了，列出 PI 要的 controller 名对用户没有意义 */
+    fun controllerMismatch(): UiText = uiTextOf(R.string.task_unavailable_controller)
+
+    /** 换一个 Adb controller 就能跑；[required] 是那些 controller 的展示名 */
+    fun controllerSwitchRequired(required: List<String>): UiText =
+        uiTextOf(R.string.task_unavailable_controller_switch, required.joinToString())
 
     fun resourceMismatch(required: List<String>): UiText =
         uiTextOf(R.string.task_unavailable_resource, required.joinToString())
@@ -65,9 +79,16 @@ data class ResolvedConfiguredTask(
     val options: List<OptionEditorState>,
     val icon: String? = null,
 ) {
+    /** 这一轮跑不了，与勾没勾无关；保存的 enabled 不动，环境恢复后照旧 */
+    val skipped: Boolean get() = !applicable || missingDefinition
+
     /** 派生态，不写回；环境恢复后 enabled 意图自动生效 */
-    val effectiveEnabled: Boolean get() = enabled && applicable && !missingDefinition
+    val effectiveEnabled: Boolean get() = enabled && !skipped
     val hasOptions: Boolean get() = options.isNotEmpty()
+
+    /** 勾选框的显示值与可点性 */
+    val checkedForDisplay: Boolean get() = enabled
+    val toggleable: Boolean get() = !skipped
 }
 
 data class TaskCatalogGroup(
@@ -87,6 +108,8 @@ data class TaskCatalogItem(
     val unavailableReason: UiText?,
     val defaultChecked: Boolean,
     val icon: String? = null,
+    /** 没有一个 Adb controller 能跑：不会随环境恢复，目录里不可选、不能新增 */
+    val unsupported: Boolean = false,
 )
 
 /** PI v2.8.0 `setting` 分区的展示投影；选项按分区声明的顺序排 */

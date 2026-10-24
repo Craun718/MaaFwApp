@@ -64,6 +64,9 @@ object MaaDesignTokens {
         /** IconButton 与按钮前置图标的标准档 */
         val md: Dp = 20.dp
 
+        /** 顶替勾选框的圆形标记：圆要比 18dp 的方框大一圈，看着才一样大 */
+        val checkboxMark: Dp = 24.dp
+
         /** 卡片内的占位插画 */
         val lg: Dp = 32.dp
 
@@ -101,6 +104,9 @@ object MaaDesignTokens {
 
         /** 行首的主图标底 */
         val md: Dp = 32.dp
+
+        /** 行内图标按钮的可视区，与 M3 IconButton 一致 */
+        val lg: Dp = 40.dp
     }
 
     /**

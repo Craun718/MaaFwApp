@@ -14,7 +14,13 @@ import com.aliothmoon.maafw.i18n.uiTextOf
 import com.aliothmoon.maafw.privileged.LogcatServiceManager
 import com.aliothmoon.maafw.privileged.PrivilegedServicePort
 import com.aliothmoon.maafw.privileged.PrivilegedServiceState
+import com.aliothmoon.maafw.privileged.ServiceConnectResult
+import com.aliothmoon.maafw.privileged.message
+import com.aliothmoon.maafw.privileged.remoteAccessMessage
+import com.aliothmoon.maafw.privileged.remoteAccessMessageOrNull
 import com.aliothmoon.maafw.project.PiInstaller
+import com.aliothmoon.maafw.remote.AgentRuntimeDescriptor
+import com.aliothmoon.maafw.remote.AgentRuntimeEntry
 import com.aliothmoon.maafw.MaaDispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -49,8 +55,8 @@ class MaaFrameworkRunnerPort(
     private val nativeLibraryDir: String,
     /** 每轮开始时现读，不缓存：用户可能在两轮之间改了运行模式 */
     private val runMode: () -> RunMode,
-    /** 同上：分辨率偏好可能两轮之间被改 */
-    private val resolutionPreference: () -> ResolutionPreference,
+    /** 同上：分辨率预设可能两轮之间被改 */
+    private val resolutionPreset: () -> ResolutionPreset,
     /** 调试模式：传给特权进程 setup 的 isDebug，开启 MaaFramework 详细日志 */
     private val debugMode: () -> Boolean,
     /** 同上：出错存图可能两轮之间被改，每轮 setup 后现读 */
@@ -69,6 +75,28 @@ class MaaFrameworkRunnerPort(
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     override val events: Flow<RunnerEventEnvelope> = _events.asSharedFlow()
+
+    /**
+     * 配方给 agent 起的显示名，按序号对应；与特权进程读的是同一个 APK 里的同一份描述
+     * 在 app 侧就地查而不经 binder 传：回调的签名一改，挺过升级的旧特权进程就会解错参数
+     */
+    private val agentRuntimes: List<AgentRuntimeEntry> by lazy {
+        runCatching { AgentRuntimeDescriptor.readFromApk(apkPath)?.runtimes }
+            .onFailure { Timber.w(it, "agent runtime descriptor unreadable, agent names fall back to executables") }
+            .getOrNull()
+            .orEmpty()
+    }
+
+    private fun agentName(index: Int): String? = agentRuntimes.getOrNull(index)?.name
+
+    /** 细节所在的特权进程 logcat 只有调试模式才落盘，没开就提示去打开 */
+    private fun agentLaunchFailure(index: Int?): UiText {
+        val failed = index?.let {
+            val entry = agentRuntimes.getOrNull(it)
+            uiTextOf(R.string.msg_fail_agent_launch, agentLabel(entry?.name, entry?.executable.orEmpty(), it))
+        } ?: uiTextOf(R.string.msg_fail_agent_launch_any)
+        return if (debugMode()) failed else uiTextOf(R.string.msg_fail_debug_hint, failed)
+    }
 
     init {
         // 特权进程死了 onFinished 就永远不会来，phase 卡在 Running，configurationLocked
@@ -135,7 +163,8 @@ class MaaFrameworkRunnerPort(
         }
         if (previous.phase.isBusy) {
             previous.activeExecution?.let {
-                _events.tryEmit(RunnerEventEnvelope(it.executionId, it.currentTaskLabel, RunnerEvent.ExecutionFinished))
+                val result = ExecutionResult.Failed(resultReason, it.taskResults)
+                _events.tryEmit(RunnerEventEnvelope(it.executionId, it.currentTaskLabel, RunnerEvent.ExecutionFinished(result)))
             }
             Timber.w(logMessage)
         }
@@ -157,11 +186,14 @@ class MaaFrameworkRunnerPort(
                 override fun onAgentConnected(index: Int, total: Int, exec: String?) =
                     callback.onAgentConnected(index, total, exec)
 
+                override fun onAgentExited(index: Int, exec: String?, exitCode: Int, crashReport: String?) =
+                    callback.onAgentExited(index, exec, exitCode, crashReport)
+
                 override fun onTaskStarted(taskName: String?, index: Int, total: Int) =
                     callback.onTaskStarted(taskName, index, total)
 
-                override fun onTaskFinished(taskName: String?, success: Boolean, message: String?) =
-                    callback.onTaskFinished(taskName, success, message)
+                override fun onTaskFinished(taskName: String?, success: Boolean, message: String?, cancelled: Boolean) =
+                    callback.onTaskFinished(taskName, success, message, cancelled)
 
                 override fun onFinished(outcome: Int, reason: String?) =
                     callback.onFinished(outcome, reason)
@@ -177,6 +209,9 @@ class MaaFrameworkRunnerPort(
         @Volatile
         private var taskLabel: String? = null
 
+        @Volatile
+        private var taskIndex: Int = -1
+
         fun onEvent(message: String?, detailsJson: String?) {
             emit(toRunnerEvent(message.orEmpty(), detailsJson.orEmpty()))
         }
@@ -186,39 +221,46 @@ class MaaFrameworkRunnerPort(
         }
 
         fun onAgentConnected(index: Int, total: Int, exec: String?) {
-            emit(RunnerEvent.AgentConnected(index, total, exec.orEmpty()))
+            emit(RunnerEvent.AgentConnected(index, total, exec.orEmpty(), agentName(index)))
+        }
+
+        fun onAgentExited(index: Int, exec: String?, exitCode: Int, crashReport: String?) {
+            emit(RunnerEvent.AgentExited(index, exec.orEmpty(), exitCode, crashReport, agentName(index)))
         }
 
         // 不碰 completedTaskCount：那是 onTaskFinished 的账，两边各记一套会在丢事件时永久漂
         fun onTaskStarted(taskName: String?, index: Int, total: Int) {
             val name = taskName.orEmpty()
             taskLabel = taskLabels[name]?.takeIf(String::isNotBlank) ?: name
+            taskIndex = index
             updateOwn { it.copy(currentTaskName = name, totalTaskCount = total) }
             emit(RunnerEvent.Progress(name, index, total))
         }
 
-        fun onTaskFinished(taskName: String?, success: Boolean, message: String?) {
+        fun onTaskFinished(taskName: String?, success: Boolean, message: String?, cancelled: Boolean) {
             val result = TaskResult(taskName.orEmpty(), success, message)
             updateOwn { execution ->
                 val results = execution.taskResults + result
                 execution.copy(completedTaskCount = results.size, taskResults = results)
             }
+            emit(RunnerEvent.TaskFinished(taskIndex, success, cancelled))
         }
 
         fun onFinished(outcome: Int, reason: String?) {
             // 已被对账或死亡通知收回的那轮，终局 marker 在 abortRun 里发过了
-            if (_state.value.activeExecution?.executionId != executionId) return
-            emit(RunnerEvent.ExecutionFinished)
+            val execution = _state.value.activeExecution?.takeIf { it.executionId == executionId } ?: return
+            // 同一 Stub 的回调按序到达，此刻 taskResults 已是全量，marker 与 state 用同一份结局
+            val results = execution.taskResults
+            val result = when (outcome) {
+                RunOutcome.COMPLETED -> ExecutionResult.Completed(results)
+                RunOutcome.COMPLETED_WITH_FAILURES -> ExecutionResult.CompletedWithFailures(results)
+                RunOutcome.CANCELLED -> ExecutionResult.Cancelled(results)
+                RunOutcome.AGENT_LAUNCH_FAILED -> ExecutionResult.Failed(agentLaunchFailure(reason?.toIntOrNull()), results)
+                else -> ExecutionResult.Failed(if (reason.isNullOrBlank()) uiTextOf(R.string.msg_fail_default) else uiTextFromFramework(reason), results)
+            }
+            emit(RunnerEvent.ExecutionFinished(result))
             _state.update { current ->
-                val execution = current.activeExecution
-                if (execution?.executionId != executionId) return@update current
-                val results = execution.taskResults
-                val result = when (outcome) {
-                    RunOutcome.COMPLETED -> ExecutionResult.Completed(results)
-                    RunOutcome.COMPLETED_WITH_FAILURES -> ExecutionResult.CompletedWithFailures(results)
-                    RunOutcome.CANCELLED -> ExecutionResult.Cancelled(results)
-                    else -> ExecutionResult.Failed(if (reason.isNullOrBlank()) uiTextOf(R.string.msg_fail_default) else uiTextFromFramework(reason), results)
-                }
+                if (current.activeExecution?.executionId != executionId) return@update current
                 RunnerState(phase = RunnerPhase.Idle, latestResult = result)
             }
         }
@@ -256,6 +298,9 @@ class MaaFrameworkRunnerPort(
 
         return withContext(MaaDispatchers.IO) {
             try {
+                connectFailure()?.let { (reason, error) ->
+                    return@withContext failPreparation(reason, executionId, error)
+                }
                 val rejection = launchOnService(plan, executionId)
                 if (rejection != null) return@withContext failPreparation(rejection, executionId)
                 // Stop 可能在 Preparing 窗口里已经把 phase 打成 Stopping，甚至 onFinished 已收回 Idle
@@ -283,8 +328,10 @@ class MaaFrameworkRunnerPort(
             } catch (throwable: Throwable) {
                 Timber.e(throwable, "Failed to start run")
                 failPreparation(
-                    uiTextFromFramework(throwable.message ?: throwable.javaClass.simpleName),
+                    throwable.remoteAccessMessageOrNull()
+                        ?: uiTextFromFramework(throwable.message ?: throwable.javaClass.simpleName),
                     executionId,
+                    error = throwable,
                 )
             }
         }
@@ -310,9 +357,18 @@ class MaaFrameworkRunnerPort(
     }
 
     /**
+     * 先连上再投递：连不上时 useService 抛出来的只剩一句英文 message，当不了文案
+     * connect 会先刷新授权、必要时发起授权请求，后端换了也会重新绑定
+     */
+    private suspend fun connectFailure(): Pair<UiText, Throwable?>? = when (val result = servicePort.connect()) {
+        ServiceConnectResult.Connected -> null
+        is ServiceConnectResult.NotReady -> remoteAccessMessage(result.backend, result.failure) to null
+        is ServiceConnectResult.Failed -> result.message() to result.error
+    }
+
+    /**
      * 返回 null 表示已受理，否则返回拒绝原因
-     * 走 useService 而非取当前实例：它会先刷新授权状态、必要时发起授权请求，
-     * 后端换了也会重新绑定
+     * 前面已经 connect 过，这里的 useService 只是取现成连接；中途断了照常抛
      */
     private suspend fun launchOnService(plan: RunPlan, executionId: String): UiText? {
         val piRoot = installer.installedDir()
@@ -325,16 +381,9 @@ class MaaFrameworkRunnerPort(
         service: RemoteService,
         executionId: String,
     ): UiText? {
-        if (!service.setup(piRoot.absolutePath, AppPaths.LOG_DIR.absolutePath, debugMode())) {
-            return uiTextOf(R.string.msg_reject_setup_failed)
-        }
-        // 环境性开关，不作为拒跑理由：设不上只是不存图，下一轮再试
-        runCatching { service.setSaveOnError(saveOnError()) }
-            .onFailure { Timber.w(it, "setSaveOnError failed") }
-        runCatching { service.setTextInputSink(textInputSink()) }
-            .onFailure { Timber.w(it, "setTextInputSink failed") }
         // 调试模式：把 app + 特权进程的 logcat 抓到 external/debug/logcat（对齐 MaaMeow）。
-        // 跟主服务同后端；bind 只在首次生效，startCapture 对已抓的 pid 是空操作
+        // 跟主服务同后端；bind 只在首次生效，startCapture 对已抓的 pid 是空操作。
+        // 排在 setup 之前：它不依赖 setup，而 setup 失败正是最需要现场的时候
         if (debugMode()) {
             scope.launch(MaaDispatchers.IO) {
                 runCatching {
@@ -348,14 +397,23 @@ class MaaFrameworkRunnerPort(
                 }.onFailure { Timber.w(it, "LogcatService startCapture failed") }
             }
         }
+        if (!service.setup(piRoot.absolutePath, AppPaths.LOG_DIR.absolutePath, debugMode())) {
+            return uiTextOf(R.string.msg_reject_setup_failed)
+        }
+        // 环境性开关，不作为拒跑理由：设不上只是不存图，下一轮再试
+        runCatching { service.setSaveOnError(saveOnError()) }
+            .onFailure { Timber.w(it, "setSaveOnError failed") }
+        runCatching { service.setTextInputSink(textInputSink()) }
+            .onFailure { Timber.w(it, "setTextInputSink failed") }
         val mode = runMode()
         if (!service.setVirtualDisplayMode(mode.displayMode)) {
             return uiTextOf(R.string.msg_reject_switch_display_mode, mode)
         }
         // 主屏模式不建屏也不设分辨率：尺寸是设备当下的物理尺寸，由特权进程侧的采集器供数
         val (width, height) = if (mode == RunMode.BACKGROUND) {
-            resolutionPreference().resolution.also { (w, h) ->
-                service.setVirtualDisplayResolution(w, h, DefaultDisplayConfig.DPI)
+            val preset = resolutionPreset()
+            preset.resolution.also { (w, h) ->
+                service.setVirtualDisplayResolution(w, h, preset.dpi)
             }
         } else {
             DisplayResolution(0, 0)
@@ -367,7 +425,7 @@ class MaaFrameworkRunnerPort(
         bindRunnerCallback(service, ExecutionCallback(executionId, plan.taskLabelMap()))
 
         val payload = RunPlanPayload(
-            resourcePaths = plan.resource.paths.map { File(piRoot, it).absolutePath },
+            resourcePaths = plan.resourceBundlePaths().map { File(piRoot, it).absolutePath },
             screenWidth = width,
             screenHeight = height,
             displayMode = mode.displayMode,
@@ -402,7 +460,7 @@ class MaaFrameworkRunnerPort(
     /**
      * 准备失败才把 phase 收回 Idle；onFinished / abort 已经写过终态的不要盖掉
      */
-    private fun failPreparation(reason: UiText, executionId: String): RunnerCommandResult {
+    private fun failPreparation(reason: UiText, executionId: String, error: Throwable? = null): RunnerCommandResult {
         val next = _state.updateAndGet { current ->
             if (current.phase == RunnerPhase.Preparing) {
                 RunnerState(phase = RunnerPhase.Idle, latestResult = ExecutionResult.Failed(reason))
@@ -415,7 +473,7 @@ class MaaFrameworkRunnerPort(
             }
         }
         val rejected = (next.latestResult as? ExecutionResult.Failed)?.reason ?: reason
-        return RunnerCommandResult.Rejected(rejected)
+        return RunnerCommandResult.Rejected(rejected, error)
     }
 
     /**
@@ -425,7 +483,7 @@ class MaaFrameworkRunnerPort(
      */
     private fun toRunnerEvent(message: String, detailsJson: String): RunnerEvent {
         if (message.isEmpty()) return RunnerEvent.MalformedCallback(detailsJson)
-        FocusParser.parse(message, detailsJson)?.let { return RunnerEvent.Focus(it) }
+        FocusParser.parse(message, detailsJson)?.let { return RunnerEvent.Focus(it, detailsJson) }
         return RunnerEvent.Callback(message, detailsJson)
     }
 

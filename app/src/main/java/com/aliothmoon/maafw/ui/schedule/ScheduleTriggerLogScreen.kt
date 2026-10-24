@@ -1,12 +1,14 @@
 package com.aliothmoon.maafw.ui.schedule
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -24,12 +26,18 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aliothmoon.maafw.R
 import com.aliothmoon.maafw.i18n.asString
+import com.aliothmoon.maafw.schedule.ScheduleFixAction
+import com.aliothmoon.maafw.schedule.ScheduleFixMapping
 import com.aliothmoon.maafw.schedule.ScheduleIntent
 import com.aliothmoon.maafw.schedule.ScheduleViewModel
 import com.aliothmoon.maafw.schedule.TriggerLogEntry
@@ -37,8 +45,10 @@ import com.aliothmoon.maafw.schedule.TriggerResult
 import com.aliothmoon.maafw.theme.MaaDesignTokens
 import com.aliothmoon.maafw.theme.MaaTheme
 import com.aliothmoon.maafw.ui.components.MaaCardSurface
+import com.aliothmoon.maafw.ui.components.ListPlaceholder
 import com.aliothmoon.maafw.ui.components.MaaToneBadge
 import org.koin.androidx.compose.koinViewModel
+import com.aliothmoon.maafw.ui.components.MaaIconButton
 
 /**
  * 触发日志页（二级页面）：只读，按时间倒序
@@ -49,9 +59,12 @@ import org.koin.androidx.compose.koinViewModel
 @Composable
 fun ScheduleTriggerLogScreen(
     onBack: () -> Unit,
+    /** 去哪修由 Route 层定：要切 tab、要走 Session 的授权、要开编辑页，这一页都够不着 */
+    onFix: (ScheduleFixAction, TriggerLogEntry) -> Unit = { _, _ -> },
     viewModel: ScheduleViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val ruleIds = remember(state.rows) { state.rows.mapTo(HashSet()) { it.strategy.id } }
     LaunchedEffect(Unit) { viewModel.onIntent(ScheduleIntent.LoadTriggerLog) }
 
     Scaffold(
@@ -81,38 +94,56 @@ fun ScheduleTriggerLogScreen(
             )
         },
     ) { padding ->
-        if (state.triggerLog.isEmpty()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(MaaDesignTokens.Spacing.lg),
-            ) {
-                Text(
-                    text = stringResource(R.string.schedule_log_empty),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        } else {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+        ) {
+            val badgeWidth = rememberResultBadgeWidth()
             LazyColumn(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
+                    .fillMaxSize(),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(MaaDesignTokens.Spacing.lg),
                 verticalArrangement = Arrangement.spacedBy(MaaDesignTokens.Spacing.sm),
             ) {
                 // 不给 key：日志是只读快照，行没有稳定标识（同一策略可重复出现）
                 items(state.triggerLog, key = { it.stableId }) { entry ->
-                    TriggerLogRow(entry, onDelete = { viewModel.onIntent(ScheduleIntent.DeleteTriggerLogEntry(entry.stableId)) })
+                    // 规则已删就没有可编辑的了，按钮不摆
+                    val fix = ScheduleFixMapping.fixActionFor(entry)
+                        ?.takeUnless { it == ScheduleFixAction.EDIT_RULE && entry.strategyId !in ruleIds }
+                    TriggerLogRow(
+                        entry = entry,
+                        badgeWidth = badgeWidth,
+                        onDelete = { viewModel.onIntent(ScheduleIntent.DeleteTriggerLogEntry(entry.stableId)) },
+                        onFix = fix?.let { { onFix(it, entry) } },
+                    )
                 }
             }
+            if (state.triggerLog.isEmpty()) ListPlaceholder(R.string.schedule_log_empty)
         }
     }
 }
 
+/** 结果徽章逐条等宽才对得齐，按当前语言下最长的那个量；内边距与 [MaaToneBadge] 一致 */
 @Composable
-private fun TriggerLogRow(entry: TriggerLogEntry, onDelete: () -> Unit) {
+private fun rememberResultBadgeWidth(): Dp {
+    val labels = TriggerResult.entries.map { it.asUiText().asString() }
+    val style = MaterialTheme.typography.labelSmall
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    return remember(labels, style, density) {
+        val text = with(density) { labels.maxOf { measurer.measure(it, style, maxLines = 1).size.width }.toDp() }
+        text + MaaDesignTokens.Spacing.sm * 2
+    }
+}
+
+@Composable
+private fun TriggerLogRow(
+    entry: TriggerLogEntry,
+    badgeWidth: Dp,
+    onDelete: () -> Unit,
+    onFix: (() -> Unit)?,
+) {
     MaaCardSurface(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
@@ -136,8 +167,9 @@ private fun TriggerLogRow(entry: TriggerLogEntry, onDelete: () -> Unit) {
                         TriggerResult.STARTED, TriggerResult.TRIGGERED -> MaaTheme.palette.success
                         else -> MaaTheme.palette.warning
                     },
+                    modifier = Modifier.width(badgeWidth),
                 )
-                IconButton(onClick = onDelete) {
+                MaaIconButton(onClick = onDelete) {
                     Icon(
                         imageVector = Icons.Outlined.DeleteOutline,
                         contentDescription = stringResource(R.string.common_delete),
@@ -159,6 +191,11 @@ private fun TriggerLogRow(entry: TriggerLogEntry, onDelete: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
+            }
+            onFix?.let {
+                TextButton(onClick = it) {
+                    Text(stringResource(R.string.schedule_health_fix))
+                }
             }
         }
     }

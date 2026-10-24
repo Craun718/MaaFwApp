@@ -198,9 +198,45 @@ class LogExportServiceTest {
         assertEquals(emptyList<File>(), File(base, "log/export").listFiles()?.toList().orEmpty())
     }
 
+    /** 必带的不看预算 */
+    @Test
+    fun `backups and images past the size budget are dropped and listed`() = runTest {
+        File(base, "log/maafw.log").apply {
+            parentFile!!.mkdirs()
+            writeText("current")
+        }
+        File(base, "log/maafw.bak.2026.10.08-10.34.10.978.log").writeText("older")
+        File(base, "log/on_error/shot.png").apply {
+            parentFile!!.mkdirs()
+            writeBytes(byteArrayOf(1, 2, 3))
+        }
+
+        ZipFile(service(maxZipBytes = 1).exportZip()!!).use { archive ->
+            assertEquals(
+                listOf("device_info.txt", "settings_snapshot.json", "pi_config_snapshot.json", "log/maafw.log", "export_skipped.txt"),
+                archive.entries().toList().map { it.name },
+            )
+            assertEquals(
+                setOf(
+                    "log/maafw.bak.2026.10.08-10.34.10.978.log: over export size budget",
+                    "log/on_error/shot.png: over export size budget",
+                ),
+                archive.getInputStream(archive.getEntry("export_skipped.txt")).readBytes().decodeToString().lines().toSet(),
+            )
+        }
+
+        ZipFile(service().exportZip()!!).use { archive ->
+            assertEquals(
+                setOf("device_info.txt", "settings_snapshot.json", "pi_config_snapshot.json", "log/maafw.log", "log/maafw.bak.2026.10.08-10.34.10.978.log", "log/on_error/shot.png"),
+                archive.entries().toList().map { it.name }.toSet(),
+            )
+        }
+    }
+
     private fun service(
         debugMode: Boolean = false,
         secrets: List<String> = emptyList(),
+        maxZipBytes: Long = Long.MAX_VALUE,
         settingsSnapshot: suspend () -> String = { """{"snapshotVersion":1}""" },
         piConfigSnapshot: suspend () -> String = { """{"snapshotVersion":1}""" },
     ) = LogExportService(
@@ -212,5 +248,6 @@ class LogExportServiceTest {
         settingsSnapshot = settingsSnapshot,
         piConfigSnapshot = piConfigSnapshot,
         secrets = { secrets },
+        maxZipBytes = maxZipBytes,
     )
 }

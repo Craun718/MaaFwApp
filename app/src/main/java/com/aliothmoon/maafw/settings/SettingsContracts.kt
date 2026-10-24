@@ -6,6 +6,7 @@ import com.aliothmoon.maafw.i18n.UiText
 import com.aliothmoon.maafw.i18n.uiTextOf
 import com.aliothmoon.maafw.privileged.RemoteAccessState
 import com.aliothmoon.maafw.runner.RunDurationLimit
+import com.aliothmoon.maafw.theme.UiScale
 import com.aliothmoon.maafw.update.UpdateChannel
 import com.aliothmoon.maafw.update.UpdateCheckResult
 import com.aliothmoon.maafw.update.UpdateSource
@@ -23,6 +24,8 @@ data class SettingsUiState(
     val pipOnHome: Boolean = true,
     val runDurationLimitEnabled: Boolean = false,
     val runDurationLimitMinutes: Int = RunDurationLimit.DEFAULT_MINUTES,
+    /** 页面缩放的存储值；[com.aliothmoon.maafw.theme.UiScale.AUTO] 为自动 */
+    val uiScale: Int = UiScale.AUTO,
 )
 
 data class UpdatePanelState(
@@ -47,10 +50,18 @@ data class UpdatePanelState(
     val downloading: Boolean = false,
     val downloadedBytes: Long = -1L,
     val totalBytes: Long = -1L,
+    /** 每秒字节数；刚开始还算不出时为负 */
+    val bytesPerSecond: Long = -1L,
     val errorMessage: UiText? = null,
 ) {
     val availableUpdate: UpdateCheckResult.UpdateAvailable?
         get() = checkResult as? UpdateCheckResult.UpdateAvailable
+}
+
+/** 一次性 Effect，不进 UiState */
+sealed interface SettingsEffect {
+    /** 轻提示；结果不值得在卡片里占一行（如「已是最新版本」） */
+    data class ShowMessage(val message: UiText) : SettingsEffect
 }
 
 sealed interface SettingsIntent {
@@ -67,6 +78,7 @@ sealed interface SettingsIntent {
     data class SetPipOnHome(val enabled: Boolean) : SettingsIntent
     data class SetRunDurationLimitEnabled(val enabled: Boolean) : SettingsIntent
     data class SetRunDurationLimitMinutes(val minutes: Int) : SettingsIntent
+    data class SetUiScale(val scale: Int) : SettingsIntent
     data object CheckUpdate : SettingsIntent
     data object DownloadUpdate : SettingsIntent
     data object CancelDownload : SettingsIntent
